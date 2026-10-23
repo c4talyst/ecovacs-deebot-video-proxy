@@ -3,6 +3,7 @@
 *.env
 config.yaml
 !config.example.yaml
+config/
 .ecovacs_session.json
 discovered_devices.json
 

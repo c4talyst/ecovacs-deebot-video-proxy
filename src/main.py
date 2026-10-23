@@ -15,12 +15,12 @@ import asyncio
 from io import BytesIO
 import logging
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
 import time
 from typing import Any
-
 import aiohttp
 from aiohttp import web
 from av import VideoFrame
@@ -39,7 +39,96 @@ def _frame_to_jpeg(frame: VideoFrame) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=80)
     return buffer.getvalue()
+def get_mediamtx_config_path() -> Path:
+    """Find the MediaMTX configuration file path."""
+    candidates = [Path("mediamtx.yml"), Path("/app/mediamtx.yml"), Path("/etc/mediamtx.yml")]
+    for c in candidates:
+        if c.is_file():
+            return c
+    return Path("mediamtx.yml")
 
+
+def write_mediamtx_config(
+    cfg_path: Path,
+    rtsp_port: int,
+    username: str = "",
+    password: str = "",
+) -> None:
+    """Write MediaMTX configuration with unified authentication across RTSP, WebRTC, and HLS."""
+    if username and password:
+        auth_section = f"""authInternalUsers:
+  - user: any
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+  - user: "{username}"
+    pass: "{password}"
+    permissions:
+      - action: read"""
+    else:
+        auth_section = """authInternalUsers:
+  - user: any
+    permissions:
+      - action: publish
+      - action: read"""
+
+    content = f"""# MediaMTX Configuration for Ecovacs Deebot Video Proxy
+logLevel: info
+logDestinations: [stdout]
+
+# RTSP Server
+rtsp: yes
+rtspTransports: [tcp, udp]
+rtspAddress: :{rtsp_port}
+rtspsAddress: :8322
+
+# WebRTC & HLS (allows viewing directly in browser on port 8889 / 8888)
+webrtc: yes
+webrtcAddress: :8889
+hls: yes
+hlsAddress: :8888
+
+# Unused protocols
+rtmp: no
+srt: no
+
+# Authentication for RTSP, WebRTC, and HLS
+{auth_section}
+
+paths:
+  all:
+"""
+    try:
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        _LOGGER.info("Updated MediaMTX configuration at %s (auth=%s)", cfg_path, bool(username and password))
+    except Exception as e:
+        _LOGGER.warning("Could not write MediaMTX config to %s: %s", cfg_path, e)
+
+
+def terminate_orphan_mediamtx() -> None:
+    """Terminate any orphan mediamtx processes so Python has full supervisor ownership."""
+    try:
+        proc_dir = Path("/proc")
+        if not proc_dir.is_dir():
+            return
+        current_pid = os.getpid()
+        for p in proc_dir.iterdir():
+            if not p.is_dir() or not p.name.isdigit():
+                continue
+            pid = int(p.name)
+            if pid == current_pid or pid == 1:
+                continue
+            try:
+                cmdline = (p / "cmdline").read_bytes().split(b"\x00")
+                if any(b"mediamtx" in arg for arg in cmdline):
+                    _LOGGER.info("Terminating unmanaged mediamtx process (PID %d)...", pid)
+                    os.kill(pid, signal.SIGTERM)
+                    time.sleep(0.2)
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 class EcovacsRtspBridge:
     def __init__(self, config: AppConfig) -> None:
@@ -57,14 +146,38 @@ class EcovacsRtspBridge:
         self.latest_jpeg_seq = 0
         self._last_jpeg_time = 0.0
 
+    def update_mediamtx_auth(self) -> None:
+        """Write current credentials to mediamtx.yml so MediaMTX auto-reloads."""
+        cfg_path = get_mediamtx_config_path()
+        write_mediamtx_config(
+            cfg_path,
+            rtsp_port=self.config.rtsp.port,
+            username=self.config.rtsp.username,
+            password=self.config.rtsp.password,
+        )
+
     def start_embedded_mediamtx(self) -> None:
         """Launch embedded MediaMTX if available and not already listening on RTSP port."""
+        if os.environ.get("DISABLE_MEDIAMTX") == "1":
+            _LOGGER.info("Embedded MediaMTX disabled via DISABLE_MEDIAMTX=1.")
+            return
+
+        cfg_path = get_mediamtx_config_path()
+        write_mediamtx_config(
+            cfg_path,
+            rtsp_port=self.config.rtsp.port,
+            username=self.config.rtsp.username,
+            password=self.config.rtsp.password,
+        )
+
+        terminate_orphan_mediamtx()
+
         import socket
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         res = s.connect_ex(("127.0.0.1", self.config.rtsp.port))
         s.close()
         if res == 0:
-            _LOGGER.info("RTSP server already detected on port %d.", self.config.rtsp.port)
+            _LOGGER.info("RTSP server already active on port %d.", self.config.rtsp.port)
             return
 
         mtx_bins = ["mediamtx", "/usr/local/bin/mediamtx", "/tmp/mediamtx"]
@@ -74,32 +187,23 @@ class EcovacsRtspBridge:
             found_bin = shutil.which("mediamtx")
 
         if found_bin:
-            cfg_path = "mediamtx.yml" if os.path.isfile("mediamtx.yml") else "/etc/mediamtx.yml"
-            cmd = [found_bin]
-            if os.path.isfile(cfg_path):
-                cmd.append(cfg_path)
+            cmd = [found_bin, str(cfg_path)]
             _LOGGER.info("Launching embedded MediaMTX (%s)...", found_bin)
-            mtx_env = dict(os.environ)
-            if self.config.rtsp.username and self.config.rtsp.password:
-                _LOGGER.info("RTSP stream authentication enabled for reader '%s'.", self.config.rtsp.username)
-                mtx_env["MTX_PATHS_ALL_READUSER"] = self.config.rtsp.username
-                mtx_env["MTX_PATHS_ALL_READPASS"] = self.config.rtsp.password
-            else:
-                mtx_env.pop("MTX_PATHS_ALL_READUSER", None)
-                mtx_env.pop("MTX_PATHS_ALL_READPASS", None)
             mediamtx_log = open("/tmp/mediamtx.log", "a", encoding="utf-8")
-            self.mediamtx_proc = subprocess.Popen(cmd, env=mtx_env, stdout=mediamtx_log, stderr=mediamtx_log)
+            self.mediamtx_proc = subprocess.Popen(cmd, stdout=mediamtx_log, stderr=mediamtx_log)
             time.sleep(1)
         else:
             _LOGGER.warning("MediaMTX binary not found locally. Ensure an RTSP server is running on port %d.", self.config.rtsp.port)
 
     def trigger_restart(self) -> None:
         """Trigger reconnection loop with updated credentials."""
-        _LOGGER.info("Configuration reload triggered. Restarting streaming loop...")
+        _LOGGER.info("Configuration reload triggered. Updating auth and restarting streaming loop...")
+        self.update_mediamtx_auth()
+        if not self.mediamtx_proc or self.mediamtx_proc.poll() is not None:
+            self.start_embedded_mediamtx()
         self.restart_event.set()
         if self.active_webrtc:
             asyncio.create_task(self.active_webrtc.stop())
-
     def on_video_frame(self, frame: VideoFrame) -> None:
         """Feed frame to FFmpeg RTSP publisher and generate occasional JPEG for Web UI."""
         if self.pipeliner:
@@ -318,6 +422,10 @@ def main() -> None:
     )
     logging.getLogger().setLevel(getattr(logging, cfg.log_level, logging.INFO))
 
+    # Silence high-frequency per-packet RTP spam unless explicitly requested
+    aiortc_level = os.environ.get("AIORTC_LOG_LEVEL", "INFO").upper()
+    for noisy in ("aiortc.rtcrtpreceiver", "aiortc.rtpsender", "aiortc.rtcrtpsender"):
+        logging.getLogger(noisy).setLevel(getattr(logging, aiortc_level, logging.INFO))
     bridge = EcovacsRtspBridge(cfg)
 
     loop = asyncio.new_event_loop()

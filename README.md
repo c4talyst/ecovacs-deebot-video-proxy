@@ -62,12 +62,16 @@ flowchart LR
 
 ### Step 1: Start the Container
 
-#### With Docker Compose:
+#### Option A: Docker Compose (Recommended)
 ```bash
+# Run pre-built release:
 docker compose up -d
-```
 
-#### With Docker Run (e.g. Unraid / Proxmox / Portainer):
+# Or build locally from source:
+docker compose up -d --build
+```
+#### Option B: Docker Run (e.g. Unraid / Proxmox / Portainer)
+Assuming your env / config is in the ./env folder
 ```bash
 docker run -d \
   --name ecovacs-video-proxy \
@@ -77,7 +81,7 @@ docker run -d \
   -p 8888:8888 \
   -p 8889:8889 \
   -v /mnt/user/appdata/ecovacs-video-proxy:/config \
-  ecovacs-video-proxy
+  ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1
 ```
 
 ---
@@ -125,7 +129,61 @@ The configuration is automatically written to `/config/config.yaml`. The video b
 
 ---
 
-## 2. Headless / Terminal Setup (Alternative)
+## 2. Local Development Workflow
+
+To iterate quickly without finicky docker commands or rebuilding layers on every code change:
+
+### Option A: Make (Fastest Dev Loop)
+The repository includes a [`Makefile`](Makefile) and [`docker-compose.dev.yml`](docker-compose.dev.yml) with **live source code mounting** (`./src:/app/src`).
+
+```bash
+# Build and run in foreground with live logs (Ctrl+C to stop):
+make dev
+
+# Or run in background:
+make up
+
+# Apply Python edits instantly (no rebuild needed):
+make restart
+
+# Follow container logs:
+make logs
+
+# Stop container:
+make down
+```
+
+### Option B: Docker Compose Dev
+```bash
+# Build and start with live code mounting:
+docker compose -f docker-compose.dev.yml up --build
+
+# Run detached:
+docker compose -f docker-compose.dev.yml up -d --build
+
+# View real-time logs:
+docker compose -f docker-compose.dev.yml logs -f
+```
+
+### Option C: Single Docker Build & Run Command
+```bash
+# 1. Build local image
+docker build -t ecovacs-video-proxy:local .
+
+# 2. Run container with persistent config
+docker run --rm -it \
+  --name ecovacs-video-proxy \
+  -p 8080:8080 \
+  -p 8554:8554 \
+  -p 8888:8888 \
+  -p 8889:8889 \
+  -v "$(pwd)/config:/config" \
+  ecovacs-video-proxy:local
+```
+
+---
+
+## 3. Headless / Terminal Setup (Alternative)
 
 If you prefer configuring via terminal without the Web UI:
 
@@ -145,19 +203,19 @@ ECOVACS_PIN=""
 
 RTSP_PATH="live"
 RTSP_PORT=8554
-RTSP_USERNAME="admin"        # Optional: Set to require credentials
-RTSP_PASSWORD="supersecret"  # Optional: Set to require credentials
+RTSP_USERNAME="admin"        # Optional: Protects RTSP, WebRTC, HLS & Web UI
+RTSP_PASSWORD="supersecret"  # Optional: Protects RTSP, WebRTC, HLS & Web UI
 WEB_PORT=8080
 ```
 
 ---
-## 3. Integration Guide
-Once streaming, the video feed is available at:
-* **RTSP (No Auth)**: `rtsp://<SERVER_IP>:8554/live`
-* **RTSP (With Auth)**: `rtsp://<user>:<password>@<SERVER_IP>:8554/live`
-* **HLS Web Stream**: `http://<SERVER_IP>:8888/live`
-* **WebRTC**: `http://<SERVER_IP>:8889/live`
-* **Live Web Dashboard & Snapshot**: `http://<SERVER_IP>:8080/`
+
+## 4. Integration Guide
+When username and password are set, that single set of credentials automatically protects **all** endpoints (RTSP, WebRTC, HLS, and the HTTP Web UI / MJPEG / Snapshot):
+* **RTSP**: `rtsp://<SERVER_IP>:8554/live` (or `rtsp://<user>:<password>@<SERVER_IP>:8554/live`)
+* **WebRTC (WHEP)**: `http://<SERVER_IP>:8889/live/whep` (HTTP Basic / Bearer auth with `<user>:<password>`)
+* **HLS Web Stream**: `http://<SERVER_IP>:8888/live/` (HTTP Basic Auth with `<user>:<password>`)
+* **Live Web Dashboard & MJPEG & Snapshot**: `http://<SERVER_IP>:8080/` (HTTP Basic Auth with `<user>:<password>`)
 ### A. Frigate NVR
 Add the camera feed to your Frigate `config.yml`:
 
@@ -204,7 +262,7 @@ streams:
 
 ---
 
-## 4. Automated Multi-Arch Builds (GitHub Packages / GHCR)
+## 5. Automated Multi-Arch Builds (GitHub Packages / GHCR)
 
 The repository includes a ready-to-run GitHub Actions workflow (`.github/workflows/docker-publish.yml`).
 
@@ -212,12 +270,12 @@ When you push this repository to GitHub:
 1. GitHub Actions automatically builds multi-architecture images for **`linux/amd64`** (Intel/AMD, Unraid, Proxmox) and **`linux/arm64`** (Raspberry Pi, Apple Silicon).
 2. Automatically pushes the image to **GitHub Container Registry (`ghcr.io`)** at:
    ```bash
-   ghcr.io/<your-github-username>/ecovacs-video-proxy:latest
+   ghcr.io/c4talyst/ecovacs-deebot-video-proxy:latest
    ```
 3. Images are **free, public, and unthrottled** (no Docker Hub pull rate limits).
 4. Users on Unraid or Proxmox can pull the pre-built image directly without local compilation:
    ```bash
-   docker pull ghcr.io/<your-github-username>/ecovacs-video-proxy:latest
+   docker pull ghcr.io/c4talyst/ecovacs-deebot-video-proxy:latest
    ```
 
 ### Releasing a New Version
@@ -241,13 +299,13 @@ To publish an official immutable release (e.g. `v1.0.1`):
    *(Alternatively, create the release in GitHub under **Releases -> Draft a new release**, setting the tag to `v1.0.1`.)*
 
 The workflow validates that the tag matches `__version__` in `src/__init__.py` and automatically publishes:
-- `ghcr.io/<repo>:1.0.1` (exact release)
-- `ghcr.io/<repo>:1.0` (latest minor)
-- `ghcr.io/<repo>:1` (latest major)
+- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0.1` (exact release)
+- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0` (latest minor)
+- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1` (latest major)
 
 ---
 
-## 5. Reconnection & Keepalive Architecture
+## 6. Reconnection & Keepalive Architecture
 
 ### Ecovacs Watchdog Prevention
 Ecovacs vacuums power down their camera module if they do not receive regular heartbeats (`appping`) through their cloud gateway (`api-ngiot.dc-na.ww.ecouser.net`).
@@ -258,7 +316,7 @@ The bridge executes an asynchronous background task sending `appping` every 35 s
 MediaMTX runs as an independent daemon within the container. When the vacuum drops a session or transitions states, the RTSP publisher temporarily stops pushing frames, but **MediaMTX keeps the RTSP listener open on port 8554**. Consumers like Frigate or Go2RTC remain connected without crashing or repeatedly logging connection refused errors.
 
 ---
-## 6. Port Reference
+## 7. Port Reference
 
 | Port | Protocol | Purpose |
 | :--- | :--- | :--- |
@@ -269,7 +327,7 @@ MediaMTX runs as an independent daemon within the container. When the vacuum dro
 
 ---
 
-## 7. License & Disclaimer
+## 8. License & Disclaimer
 This project is licensed under the [MIT License](LICENSE).
 
 This project is an independent community reverse-engineering tool and is not affiliated with, endorsed by, or supported by ECOVACS Robotics. Use at your own risk.

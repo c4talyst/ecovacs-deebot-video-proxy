@@ -1,11 +1,10 @@
 # MediaMTX Configuration for Ecovacs Deebot Video Proxy
-
 logLevel: info
 logDestinations: [stdout]
 
 # RTSP Server
 rtsp: yes
-protocols: [tcp, udp]
+rtspTransports: [tcp, udp]
 rtspAddress: :8554
 rtspsAddress: :8322
 
@@ -15,14 +14,20 @@ webrtcAddress: :8889
 hls: yes
 hlsAddress: :8888
 
-# RTMP Server
+# Unused protocols
 rtmp: no
+srt: no
 
-# Stream paths configuration
+# Authentication for RTSP, WebRTC, and HLS
+authInternalUsers:
+  - user: any
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+  - user: "admin"
+    pass: "cheese"
+    permissions:
+      - action: read
+
 paths:
   all:
-    # Allow local publisher without authentication
-    publishUser: ""
-    publishPass: ""
-    readUser: ""
-    readPass: ""

@@ -97,8 +97,8 @@ async def run_setup() -> None:
                 selected_did = devices[int(choice) - 1].get("did", "")
 
         pin = input("\nEnter camera/video manager PIN (leave blank if disabled): ").strip()
-        rtsp_user = input("Enter optional RTSP username (leave blank for none): ").strip()
-        rtsp_pass = input("Enter optional RTSP password (leave blank for none): ").strip() if rtsp_user else ""
+        rtsp_user = input("Enter optional stream & web username (protects RTSP, WebRTC, HLS, Web UI): ").strip()
+        rtsp_pass = input("Enter optional stream & web password: ").strip() if rtsp_user else ""
         # Generate config.yaml
         cfg_dict = {
             "ecovacs": {
