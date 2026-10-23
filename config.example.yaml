@@ -28,9 +28,9 @@ rtsp:
   preset: "ultrafast"
   tune: "zerolatency"
 
-  # Optional: Protect RTSP stream with username and password
+  # Optional: Protect all services (RTSP, WebRTC, HLS, HTTP Web UI, MJPEG) with username and password
   # Leave blank for unauthenticated public stream: rtsp://<host>:8554/live
-  # If configured, stream requires auth: rtsp://user:pass@<host>:8554/live
+  # If configured, all feeds and Web UI require auth (e.g. rtsp://user:pass@<host>:8554/live, HTTP Basic)
   username: ""
   password: ""
 streamer:

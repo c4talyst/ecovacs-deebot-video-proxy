@@ -1,7 +1,6 @@
 services:
   ecovacs-video-proxy:
-    # Use the pre-built multi-arch GHCR image:
-    # image: ghcr.io/<your-github-username>/ecovacs-video-proxy:latest
+    image: ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1
     build:
       context: .
       dockerfile: Dockerfile

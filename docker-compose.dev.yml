@@ -1,0 +1,33 @@
+services:
+  ecovacs-video-proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ecovacs-video-proxy
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # Web Setup Wizard & Live Dashboard
+      - "8554:8554"   # RTSP Video Stream
+      - "8888:8888"   # HLS Web Player
+      - "8889:8889"   # WebRTC Stream
+    volumes:
+      # Live-mount source code for instant updates without rebuilding
+      - ./src:/app/src
+      - ./mediamtx.yml:/app/mediamtx.yml
+      # Persistent config storage
+      - ./config:/config
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - WEB_PORT=${WEB_PORT:-8080}
+      - RTSP_PATH=${RTSP_PATH:-live}
+      - RTSP_PORT=${RTSP_PORT:-8554}
+      - RTSP_USERNAME=${RTSP_USERNAME:-}
+      - RTSP_PASSWORD=${RTSP_PASSWORD:-}
+      - ECOVACS_USERNAME=${ECOVACS_USERNAME:-}
+      - ECOVACS_PASSWORD=${ECOVACS_PASSWORD:-}
+      - ECOVACS_COUNTRY=${ECOVACS_COUNTRY:-za}
+      - ECOVACS_DEVICE_ID=${ECOVACS_DEVICE_ID:-}
+      - ECOVACS_ACCESS_TOKEN=${ECOVACS_ACCESS_TOKEN:-}
+      - ECOVACS_USER_ID=${ECOVACS_USER_ID:-}
+      - ECOVACS_PIN=${ECOVACS_PIN:-}
+      - ECOVACS_ROBOT_DID=${ECOVACS_ROBOT_DID:-}

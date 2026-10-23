@@ -9,6 +9,8 @@ Provides a clean browser-based interface for:
 from __future__ import annotations
 
 import asyncio
+import base64
+import hmac
 import json
 import logging
 import os
@@ -20,7 +22,6 @@ import yaml
 
 from .ecovacs_auth import EcovacsAuthClient
 from .config import AppConfig, load_config
-
 _LOGGER = logging.getLogger("ecovacs.web_ui")
 
 HTML_UI = """<!DOCTYPE html>
@@ -223,15 +224,15 @@ HTML_UI = """<!DOCTYPE html>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                     <div class="form-group">
-                        <label>RTSP Username (Optional)</label>
+                        <label>Stream & Web Username (Optional)</label>
                         <input type="text" id="input-rtsp-user" placeholder="e.g. admin">
                     </div>
                     <div class="form-group">
-                        <label>RTSP Password (Optional)</label>
+                        <label>Stream & Web Password (Optional)</label>
                         <input type="password" id="input-rtsp-pass" placeholder="e.g. secret">
                     </div>
                 </div>
-                <div class="hint" style="margin-bottom: 16px;">Set a username and password to password-protect your RTSP stream in Frigate/VLC.</div>
+                <div class="hint" style="margin-bottom: 16px;">Protects all feeds (RTSP, WebRTC, HLS, MJPEG) and this Web UI with HTTP Basic Auth.</div>
                 <button class="btn" id="btn-save" onclick="saveAndStart()">
                     <span>Save Configuration & Start Streaming</span>
                 </button>
@@ -249,8 +250,20 @@ HTML_UI = """<!DOCTYPE html>
                 <img id="dash-img" src="/mjpeg" alt="Live Stream">
             </div>
 
-            <label>RTSP Stream URL (Frigate / VLC / Go2RTC):</label>
-            <div class="url-box" id="rtsp-url-display">rtsp://localhost:8554/live</div>
+            <div style="margin-bottom: 14px;">
+                <label>RTSP Stream URL (Frigate / VLC / Go2RTC):</label>
+                <div class="url-box" id="rtsp-url-display">rtsp://localhost:8554/live</div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;">
+                <div>
+                    <label>WebRTC (WHEP):</label>
+                    <div class="url-box" style="font-size: 11.5px;" id="webrtc-url-display">http://localhost:8889/live/whep</div>
+                </div>
+                <div>
+                    <label>HLS Web Stream:</label>
+                    <div class="url-box" style="font-size: 11.5px;" id="hls-url-display">http://localhost:8888/live/</div>
+                </div>
+            </div>
 
             <div style="display: flex; gap: 10px; margin-top: 16px;">
                 <a href="/snapshot.jpg" target="_blank" class="btn btn-outline" style="text-decoration: none;">Download Snapshot</a>
@@ -292,17 +305,26 @@ HTML_UI = """<!DOCTYPE html>
         async function checkStatus() {
             try {
                 const res = await fetch("/api/config-status");
+                if (res.status === 401) {
+                    location.reload();
+                    return;
+                }
                 const data = await res.json();
                 if (data.configured) {
                     document.getElementById("setup-card").style.display = "none";
                     document.getElementById("dashboard-card").style.display = "block";
                     document.getElementById("dash-robot-name").textContent = data.robotName || "Ecovacs Vacuum";
-                    let rtspUrl = "rtsp://";
-                    if (data.hasAuth) {
-                        rtspUrl += encodeURIComponent(data.rtspUser) + ":••••••@";
-                    }
-                    rtspUrl += hostIP + ":" + (data.rtspPort || 8554) + "/" + (data.rtspPath || "live");
+                    const credPrefix = data.hasAuth ? (encodeURIComponent(data.rtspUser) + ":••••••@") : "";
+                    const rtspUrl = "rtsp://" + credPrefix + hostIP + ":" + (data.rtspPort || 8554) + "/" + (data.rtspPath || "live");
+                    const webrtcUrl = "http://" + credPrefix + hostIP + ":" + (data.webrtcPort || 8889) + "/" + (data.rtspPath || "live") + "/whep";
+                    const hlsUrl = "http://" + credPrefix + hostIP + ":" + (data.hlsPort || 8888) + "/" + (data.rtspPath || "live") + "/";
+
                     document.getElementById("rtsp-url-display").textContent = rtspUrl;
+                    const webrtcEl = document.getElementById("webrtc-url-display");
+                    if (webrtcEl) webrtcEl.textContent = webrtcUrl;
+                    const hlsEl = document.getElementById("hls-url-display");
+                    if (hlsEl) hlsEl.textContent = hlsUrl;
+
                     const statusEl = document.getElementById("dash-status");
                     if (statusEl) {
                         statusEl.textContent = data.streaming ? "STREAMING" : "CONNECTING...";
@@ -476,7 +498,7 @@ class WebUIService:
         self.bridge = bridge
         self.host = host
         self.port = port
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._auth_middleware])
         self.temp_auth_client: EcovacsAuthClient | None = None
         self.temp_creds: dict[str, Any] = {}
 
@@ -490,6 +512,37 @@ class WebUIService:
         # Proxied stream endpoints
         self.app.router.add_get("/snapshot.jpg", self.handle_snapshot)
         self.app.router.add_get("/mjpeg", self.handle_mjpeg)
+
+    @web.middleware
+    async def _auth_middleware(
+        self,
+        request: web.Request,
+        handler: Any,
+    ) -> web.StreamResponse:
+        cfg_user = (self.bridge.config.rtsp.username or "").strip()
+        cfg_pass = (self.bridge.config.rtsp.password or "").strip()
+
+        # If no credentials are configured, unauthenticated access is allowed
+        if not cfg_user or not cfg_pass:
+            return await handler(request)
+
+        # HTTP Basic Authentication
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Basic "):
+            try:
+                raw_b64 = auth_header[6:].strip()
+                decoded = base64.b64decode(raw_b64).decode("utf-8")
+                user, _, password = decoded.partition(":")
+                if hmac.compare_digest(user, cfg_user) and hmac.compare_digest(password, cfg_pass):
+                    return await handler(request)
+            except Exception:
+                pass
+
+        return web.Response(
+            status=401,
+            text="401 Unauthorized: Ecovacs Video Proxy credentials required.\n",
+            headers={"WWW-Authenticate": 'Basic realm="Ecovacs Video Proxy"'},
+        )
 
     def _get_config_save_path(self) -> Path:
         """Find best persistent path for config.yaml."""
@@ -514,10 +567,12 @@ class WebUIService:
             "robotName": robot_name,
             "rtspPath": self.bridge.config.rtsp.path,
             "rtspPort": self.bridge.config.rtsp.port,
+            "webrtcPort": 8889,
+            "hlsPort": 8888,
+            "webPort": self.port,
             "hasAuth": bool(self.bridge.config.rtsp.username and self.bridge.config.rtsp.password),
             "rtspUser": self.bridge.config.rtsp.username,
         })
-
     async def handle_setup_login(self, request: web.Request) -> web.Response:
         data = await request.json()
         username = str(data.get("username", "")).strip()
@@ -632,6 +687,8 @@ class WebUIService:
             save_file.unlink()
         self.bridge.config.ecovacs.access_token = ""
         self.bridge.config.ecovacs.user_id = ""
+        self.bridge.config.rtsp.username = ""
+        self.bridge.config.rtsp.password = ""
         self.bridge.trigger_restart()
         return web.json_response({"success": True})
 
