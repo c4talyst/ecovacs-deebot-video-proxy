@@ -1,0 +1,55 @@
+# Environment & secrets
+.env
+*.env
+config.yaml
+!config.example.yaml
+.ecovacs_session.json
+discovered_devices.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+.venv/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Media captures & snapshots
+*.jpg
+*.jpeg
+*.png
+*.h264
+*.mp4
+*.mkv
+*.cap
+*.pcap
+*.tar.gz
+
+# Logs
+*.log
+logs/
+
+# IDE & OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+*.env
+config.yaml
+!config.example.yaml
+.venv
+venv
+__pycache__
+*.pyc
+*.log
+*.cap
+*.pcap
+*.jpg
+*.png
+.idea
+.vscode
