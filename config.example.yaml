@@ -1,0 +1,43 @@
+# Ecovacs Deebot Video Proxy Configuration
+
+ecovacs:
+  # Account Credentials
+  username: "your-email@example.com"
+  password: "your-ecovacs-password"
+  country: "za"  # 2-letter country code (e.g. us, de, za, fr, uk)
+
+  # Pre-authorized device identity (populated automatically by setup.py)
+  device_id: ""
+  access_token: ""
+  user_id: ""
+
+  # Camera / Video Manager PIN (leave blank if password is disabled in mobile app)
+  pin: ""
+
+  # Target Robot (leave blank to automatically select the first discovered robot)
+  robot_did: ""
+
+rtsp:
+  # Path mounted on the RTSP server: rtsp://<host>:8554/<path>
+  path: "live"
+  port: 8554
+
+  # Encoding parameters for ffmpeg pipeline
+  fps: 16
+  bitrate: "1500k"
+  preset: "ultrafast"
+  tune: "zerolatency"
+
+  # Optional: Protect RTSP stream with username and password
+  # Leave blank for unauthenticated public stream: rtsp://<host>:8554/live
+  # If configured, stream requires auth: rtsp://user:pass@<host>:8554/live
+  username: ""
+  password: ""
+streamer:
+  # Reconnection & Keepalive watchdog
+  reconnect_delay_seconds: 5
+  appping_interval_seconds: 35
+  stream_timeout_seconds: 30
+
+logging:
+  level: "INFO"  # DEBUG or INFO
