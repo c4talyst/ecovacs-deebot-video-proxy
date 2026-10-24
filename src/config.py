@@ -38,6 +38,20 @@ class StreamerConfig:
     reconnect_delay_seconds: int = 5
     appping_interval_seconds: int = 35
     stream_timeout_seconds: int = 30
+    active_only_video: bool = False
+    standby_fps: int = 2
+
+
+@dataclass
+class OverlayConfig:
+    enabled: bool = True
+    show_timestamp: bool = True
+    show_battery: bool = True
+    show_mode: bool = True
+    show_station: bool = True
+    show_maintenance: bool = True
+    show_robot_name: bool = True
+    position: str = "top_left"  # "top_left", "top_right", "bottom_left", "bottom_right", "top_banner"
 
 
 @dataclass
@@ -45,6 +59,7 @@ class AppConfig:
     ecovacs: EcovacsConfig = field(default_factory=EcovacsConfig)
     rtsp: RtspConfig = field(default_factory=RtspConfig)
     streamer: StreamerConfig = field(default_factory=StreamerConfig)
+    overlay: OverlayConfig = field(default_factory=OverlayConfig)
     log_level: str = "INFO"
 
 
@@ -63,6 +78,18 @@ def _load_env_file(env_path: Path) -> dict[str, str]:
     except Exception:
         pass
     return env_vars
+
+def _to_bool(val: Any, default: bool = False) -> bool:
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ("1", "true", "yes", "on", "enable", "enabled"):
+        return True
+    if s in ("0", "false", "no", "off", "disable", "disabled"):
+        return False
+    return default
 
 
 def load_config(config_path: str | Path | None = None) -> AppConfig:
@@ -125,6 +152,19 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         reconnect_delay_seconds=int(get_val("RECONNECT_DELAY_SECONDS", "streamer", "reconnect_delay_seconds", 5)),
         appping_interval_seconds=int(get_val("APPPING_INTERVAL_SECONDS", "streamer", "appping_interval_seconds", 35)),
         stream_timeout_seconds=int(get_val("STREAM_TIMEOUT_SECONDS", "streamer", "stream_timeout_seconds", 30)),
+        active_only_video=_to_bool(get_val("ACTIVE_ONLY_VIDEO", "streamer", "active_only_video", False), False),
+        standby_fps=int(get_val("STANDBY_FPS", "streamer", "standby_fps", 2)),
+    )
+
+    overlay = OverlayConfig(
+        enabled=_to_bool(get_val("OVERLAY_ENABLED", "overlay", "enabled", True), True),
+        show_timestamp=_to_bool(get_val("OVERLAY_SHOW_TIMESTAMP", "overlay", "show_timestamp", True), True),
+        show_battery=_to_bool(get_val("OVERLAY_SHOW_BATTERY", "overlay", "show_battery", True), True),
+        show_mode=_to_bool(get_val("OVERLAY_SHOW_MODE", "overlay", "show_mode", True), True),
+        show_station=_to_bool(get_val("OVERLAY_SHOW_STATION", "overlay", "show_station", True), True),
+        show_maintenance=_to_bool(get_val("OVERLAY_SHOW_MAINTENANCE", "overlay", "show_maintenance", True), True),
+        show_robot_name=_to_bool(get_val("OVERLAY_SHOW_ROBOT_NAME", "overlay", "show_robot_name", True), True),
+        position=str(get_val("OVERLAY_POSITION", "overlay", "position", "top_left")),
     )
 
     log_level = str(get_val("LOG_LEVEL", "logging", "level", "INFO")).upper()
@@ -133,5 +173,6 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         ecovacs=eco,
         rtsp=rtsp,
         streamer=streamer,
+        overlay=overlay,
         log_level=log_level,
     )

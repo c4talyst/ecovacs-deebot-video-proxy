@@ -29,6 +29,8 @@ logs:
 
 build:
 	docker compose -f docker-compose.dev.yml build
+test:
+	docker run --rm -v "$$(pwd)/src:/app/src" -v "$$(pwd)/tests:/app/tests" -e PYTHONPATH=/app --entrypoint python3 ecovacs-rtsp-ecovacs-video-proxy /app/tests/test_v102.py
 
 clean:
 	docker compose -f docker-compose.dev.yml down -v --remove-orphans

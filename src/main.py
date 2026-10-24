@@ -28,6 +28,8 @@ from av import VideoFrame
 from .config import AppConfig, load_config
 from .ecovacs_auth import EcovacsAuthClient
 from .live_view import EcovacsWebRTCSession, async_send_app_ping, async_start_watch
+from .overlay import StreamOverlay
+from .robot_state import RobotState, RobotStateTracker
 from .rtsp_streamer import RtspPipeliner
 from .web_ui import WebUIService
 
@@ -135,6 +137,7 @@ class EcovacsRtspBridge:
         self.config = config
         self.stop_event = asyncio.Event()
         self.restart_event = asyncio.Event()
+        self.mode_change_event = asyncio.Event()
         self.session: aiohttp.ClientSession | None = None
         self.auth_client: EcovacsAuthClient | None = None
         self.mediamtx_proc: subprocess.Popen[bytes] | None = None
@@ -142,10 +145,13 @@ class EcovacsRtspBridge:
         self.active_webrtc: EcovacsWebRTCSession | None = None
         self.robot: dict[str, Any] | None = None
 
+        self.overlay = StreamOverlay(self.config.overlay)
+        self.state_tracker: RobotStateTracker | None = None
+        self.is_standby: bool = False
+
         self.latest_jpeg: bytes | None = None
         self.latest_jpeg_seq = 0
         self._last_jpeg_time = 0.0
-
     def update_mediamtx_auth(self) -> None:
         """Write current credentials to mediamtx.yml so MediaMTX auto-reloads."""
         cfg_path = get_mediamtx_config_path()
@@ -206,18 +212,61 @@ class EcovacsRtspBridge:
             asyncio.create_task(self.active_webrtc.stop())
     def on_video_frame(self, frame: VideoFrame) -> None:
         """Feed frame to FFmpeg RTSP publisher and generate occasional JPEG for Web UI."""
+        self.is_standby = False
+        robot_name = (self.robot or {}).get("name") or "Deebot Vacuum"
+        st = self.state_tracker.state if self.state_tracker else RobotState()
+        final_frame = self.overlay.render_overlay(frame, st, robot_name)
+
         if self.pipeliner:
-            self.pipeliner.push_frame(frame)
+            self.pipeliner.push_frame(final_frame)
 
         now = time.monotonic()
         if now - self._last_jpeg_time >= 0.2:
             self._last_jpeg_time = now
             try:
-                self.latest_jpeg = _frame_to_jpeg(frame)
+                self.latest_jpeg = _frame_to_jpeg(final_frame)
                 self.latest_jpeg_seq += 1
             except Exception:
                 pass
 
+    async def _push_standby_loop(self) -> None:
+        """Feed low-framerate standby card to keep MediaMTX RTSP listener alive and showing telemetry."""
+        target_fps = max(1, self.config.streamer.standby_fps)
+        interval = 1.0 / target_fps
+        robot_name = (self.robot or {}).get("name") or "Deebot Vacuum"
+
+        _LOGGER.info("Entering standby mode (Robot/Station inactive). Video stream paused, headlights off.")
+        while (
+            not self.stop_event.is_set()
+            and not self.restart_event.is_set()
+            and not self.mode_change_event.is_set()
+        ):
+            st = self.state_tracker.state if self.state_tracker else RobotState()
+            if not self.config.streamer.active_only_video or st.is_active:
+                _LOGGER.info("Activity detected or active-only mode changed. Exiting standby mode...")
+                break
+
+            self.is_standby = True
+            standby_frame = self.overlay.generate_standby_frame(
+                width=1280,
+                height=720,
+                state=st,
+                robot_name=robot_name,
+            )
+            if self.pipeliner:
+                self.pipeliner.push_frame(standby_frame)
+
+            now = time.monotonic()
+            if now - self._last_jpeg_time >= 0.5:
+                self._last_jpeg_time = now
+                try:
+                    self.latest_jpeg = _frame_to_jpeg(standby_frame)
+                    self.latest_jpeg_seq += 1
+                except Exception:
+                    pass
+
+            await asyncio.sleep(interval)
+        self.is_standby = False
     async def _keepalive_loop(self, portal_token: str, robot: dict[str, Any]) -> None:
         """Periodically send appping to the vacuum to prevent idle streaming disconnect."""
         interval = self.config.streamer.appping_interval_seconds
@@ -307,15 +356,57 @@ class EcovacsRtspBridge:
 
                     _LOGGER.info("Target Vacuum: %s (DID: %s)", self.robot.get("name"), self.robot.get("did"))
 
+                    auth_url = self.auth_client.portal_url
+                    auth_tok = tokens.portal_token
+                    auth_uid = tokens.user_id
+
+                    def get_auth_tuple() -> tuple[str, str, str]:
+                        tok = (self.auth_client.portal_token if self.auth_client else "") or auth_tok
+                        uid = (self.auth_client.user_id if self.auth_client else "") or auth_uid
+                        purl = (self.auth_client.portal_url if self.auth_client else "") or auth_url
+                        return purl, tok, uid
+
+                    if self.state_tracker:
+                        await self.state_tracker.stop()
+                    self.state_tracker = RobotStateTracker(
+                        session_getter=lambda: self.session,
+                        auth_getter=get_auth_tuple,
+                        robot=self.robot,
+                    )
+                    self.state_tracker.add_callback(lambda _: self.mode_change_event.set())
+                    self.state_tracker.start()
                 except Exception as e:
                     _LOGGER.error("Authentication failed: %s. Check credentials in Web UI http://<host>:%d", e, web_port)
                     await asyncio.sleep(5)
                     continue
-
                 backoff = self.config.streamer.reconnect_delay_seconds
 
                 # Inner streaming loop for this robot
                 while not self.stop_event.is_set() and not self.restart_event.is_set():
+                    self.mode_change_event.clear()
+
+                    # Check if active-only mode is enabled and robot is docked & inactive
+                    st = self.state_tracker.state if self.state_tracker else RobotState()
+                    if self.config.streamer.active_only_video and not st.is_active:
+                        if not self.pipeliner or not self.pipeliner._running:
+                            rtsp_target = f"rtsp://127.0.0.1:{self.config.rtsp.port}/{self.config.rtsp.path}"
+                            self.pipeliner = RtspPipeliner(
+                                rtsp_url=rtsp_target,
+                                width=1280,
+                                height=720,
+                                fps=self.config.rtsp.fps,
+                                bitrate=self.config.rtsp.bitrate,
+                                preset=self.config.rtsp.preset,
+                                tune=self.config.rtsp.tune,
+                            )
+                            self.pipeliner.start()
+
+                        await self._push_standby_loop()
+                        if self.stop_event.is_set() or self.restart_event.is_set():
+                            break
+                        if self.config.streamer.active_only_video and self.state_tracker and not self.state_tracker.state.is_active:
+                            continue
+
                     keepalive_task: asyncio.Task[None] | None = None
                     try:
                         tokens = await self.auth_client.authenticate()
@@ -379,8 +470,13 @@ class EcovacsRtspBridge:
                         while (
                             not self.stop_event.is_set()
                             and not self.restart_event.is_set()
+                            and not self.mode_change_event.is_set()
                             and not self.active_webrtc.stop_event.is_set()
                         ):
+                            if self.config.streamer.active_only_video and self.state_tracker:
+                                if not self.state_tracker.state.is_active:
+                                    _LOGGER.info("Robot/Station is now docked & idle. Returning to standby mode...")
+                                    break
                             await asyncio.sleep(1)
 
                         _LOGGER.info("Stream connection ended. Preparing reconnection...")
@@ -404,6 +500,8 @@ class EcovacsRtspBridge:
         """Signal clean shutdown."""
         _LOGGER.info("Shutting down Ecovacs Deebot Video Proxy...")
         self.stop_event.set()
+        if self.state_tracker:
+            asyncio.create_task(self.state_tracker.stop())
         if self.pipeliner:
             self.pipeliner.stop()
         if self.mediamtx_proc:

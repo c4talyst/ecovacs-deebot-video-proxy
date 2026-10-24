@@ -51,12 +51,12 @@ flowchart LR
 
 ### Key Highlights
 - **Browser-Based Setup (No Terminal Needed)**: Start the container, open `http://<host>:8080`, enter your Ecovacs email, verify the code, and start streaming immediately.
+- **Active-Only Streaming (Auto-Night Headlight Sleep)**: Enable the Web UI toggle to shut down the vacuum's camera module and turn off headlights when docked, eliminating nighttime spotlight glare. When docked, MediaMTX pushes an informative standby graphic with live telemetry so NVRs like Frigate never lose stream connection.
+- **Real-Time On-Stream Display (OSD)**: Burn live stats directly onto the RTSP feed, HLS, WebRTC, and Web UI player (timestamp, battery level, cleaning mode, station washing/emptying/drying status, maintenance alerts, and robot name). Add or remove fields on the fly from the Web UI in real-time!
 - **Direct LAN Media Path**: While initial WebRTC signaling routes through Ecovacs/AWS, the heavy H.264 video traffic flows **directly across your local Wi-Fi** (`robot:UDP <-> container:UDP`) once ICE negotiation completes.
 - **Embedded MediaMTX Server**: Includes an embedded, ultra-lightweight RTSP server. No external streaming server required.
 - **Always-On Supervisor**: Ecovacs enforces a stream timeout watchdog (~15 min). The bridge maintains continuous `appping` keepalives and automatically re-initiates the WebRTC handshake if the vacuum drops the session, keeping the RTSP endpoint online 24/7.
 - **Unraid & Proxmox Ready**: Supports volume mounts to `/config` where generated credentials and configuration persist across container rebuilds.
-
----
 
 ## 1. Quick Start Guide (Unraid / Proxmox / Docker)
 
@@ -127,9 +127,36 @@ Navigate to **`http://<YOUR_SERVER_IP>:8080`** in your browser.
 
 The configuration is automatically written to `/config/config.yaml`. The video bridge starts broadcasting immediately, displaying a live preview and your RTSP URL!
 
+## 2. Power Saving & Stream Stats Overlay (v1.0.2)
+
+### A. "Only Enable Video When Robot or Station is Active"
+Ecovacs vacuums keep their front headlights and camera sensor active whenever a live video session is open. When parked in the charging dock at night, this can illuminate dark rooms.
+
+The Web UI includes a toggle: **"Only enable video when Robot or Station is Active"**:
+* **When Docked & Idle**: The container tears down the WebRTC session to the vacuum, allowing the robot to turn off its camera and headlights completely.
+* **Continuous RTSP Stream**: The embedded RTSP publisher automatically generates a sleek 1080p/720p standby graphic card showing live battery %, station status, and time. MediaMTX, Frigate NVR, and Go2RTC remain connected without any stream disconnects or errors.
+* **Automatic Live Streaming**: As soon as the robot begins cleaning or the station starts a task (washing mop, drying, emptying dustbin), live camera video resumes immediately.
+* **On-Demand Camera Wake**: Need to take a quick peek while docked? Click **Wake Camera (5 min)** in the Web UI to temporarily stream without turning off auto-sleep.
+
+### B. Live Stream Telemetry & Stats Overlay (OSD)
+Display live diagnostic statistics directly burned into the RTSP feed and Web UI preview.
+
+You can add or remove any of the following fields in **real-time** from the Web UI:
+| Field | Description | Example |
+| :--- | :--- | :--- |
+| **Timestamp** | Current date and time (seconds updated live) | `2026-10-23 21:45:02` |
+| **Battery** | Charge percentage and charging indicator | `🔋 95% ⚡` |
+| **Robot Mode** | Cleaning, returning, paused, or docked | `Mode: Cleaning` |
+| **Station State** | Washing mop, drying mop, emptying dustbin, idle | `Station: Washing Mop` |
+| **Maintenance** | Alerts when consumables (filter, brushes) are low | `⚠️ Filter Low (8%)` |
+| **Robot Name** | Configured vacuum nickname | `🤖 DEEBOT X1 OMNI` |
+
+**Customizable Positions**: Top-Left, Top-Right, Bottom-Left, Bottom-Right, or Top Banner (Full Width).
+
+---
 ---
 
-## 2. Local Development Workflow
+## 3. Local Development Workflow
 
 To iterate quickly without finicky docker commands or rebuilding layers on every code change:
 
@@ -183,7 +210,7 @@ docker run --rm -it \
 
 ---
 
-## 3. Headless / Terminal Setup (Alternative)
+## 4. Headless / Terminal Setup (Alternative)
 
 If you prefer configuring via terminal without the Web UI:
 
@@ -205,12 +232,14 @@ RTSP_PATH="live"
 RTSP_PORT=8554
 RTSP_USERNAME="admin"        # Optional: Protects RTSP, WebRTC, HLS & Web UI
 RTSP_PASSWORD="supersecret"  # Optional: Protects RTSP, WebRTC, HLS & Web UI
+ACTIVE_ONLY_VIDEO="false"    # Set to "true" to only stream when active
+OVERLAY_ENABLED="true"       # Set to "true" to burn stats into the feed
+OVERLAY_POSITION="top_left"  # top_left, top_right, bottom_left, bottom_right, top_banner
 WEB_PORT=8080
-```
 
 ---
 
-## 4. Integration Guide
+## 5. Integration Guide
 When username and password are set, that single set of credentials automatically protects **all** endpoints (RTSP, WebRTC, HLS, and the HTTP Web UI / MJPEG / Snapshot):
 * **RTSP**: `rtsp://<SERVER_IP>:8554/live` (or `rtsp://<user>:<password>@<SERVER_IP>:8554/live`)
 * **WebRTC (WHEP)**: `http://<SERVER_IP>:8889/live/whep` (HTTP Basic / Bearer auth with `<user>:<password>`)
@@ -262,7 +291,7 @@ streams:
 
 ---
 
-## 5. Automated Multi-Arch Builds (GitHub Packages / GHCR)
+## 6. Automated Multi-Arch Builds (GitHub Packages / GHCR)
 
 The repository includes a ready-to-run GitHub Actions workflow (`.github/workflows/docker-publish.yml`).
 
@@ -299,13 +328,13 @@ To publish an official immutable release (e.g. `v1.0.1`):
    *(Alternatively, create the release in GitHub under **Releases -> Draft a new release**, setting the tag to `v1.0.1`.)*
 
 The workflow validates that the tag matches `__version__` in `src/__init__.py` and automatically publishes:
-- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0.1` (exact release)
+- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0.2` (exact release)
 - `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0` (latest minor)
 - `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1` (latest major)
 
 ---
 
-## 6. Reconnection & Keepalive Architecture
+## 7. Reconnection & Keepalive Architecture
 
 ### Ecovacs Watchdog Prevention
 Ecovacs vacuums power down their camera module if they do not receive regular heartbeats (`appping`) through their cloud gateway (`api-ngiot.dc-na.ww.ecouser.net`).
@@ -316,7 +345,7 @@ The bridge executes an asynchronous background task sending `appping` every 35 s
 MediaMTX runs as an independent daemon within the container. When the vacuum drops a session or transitions states, the RTSP publisher temporarily stops pushing frames, but **MediaMTX keeps the RTSP listener open on port 8554**. Consumers like Frigate or Go2RTC remain connected without crashing or repeatedly logging connection refused errors.
 
 ---
-## 7. Port Reference
+## 8. Port Reference
 
 | Port | Protocol | Purpose |
 | :--- | :--- | :--- |
@@ -327,7 +356,7 @@ MediaMTX runs as an independent daemon within the container. When the vacuum dro
 
 ---
 
-## 8. License & Disclaimer
+## 9. License & Disclaimer
 This project is licensed under the [MIT License](LICENSE).
 
 This project is an independent community reverse-engineering tool and is not affiliated with, endorsed by, or supported by ECOVACS Robotics. Use at your own risk.

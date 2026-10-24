@@ -38,6 +38,20 @@ streamer:
   reconnect_delay_seconds: 5
   appping_interval_seconds: 35
   stream_timeout_seconds: 30
+  # Power-saving mode: Only stream video when Robot or Station is active (docked = standby, headlights off)
+  active_only_video: false
+  standby_fps: 2
+
+overlay:
+  # On-Screen Display (OSD) real-time telemetry overlay on RTSP stream & Web UI
+  enabled: true
+  show_timestamp: true
+  show_battery: true
+  show_mode: true
+  show_station: true
+  show_maintenance: true
+  show_robot_name: true
+  position: "top_left"  # top_left, top_right, bottom_left, bottom_right, top_banner
 
 logging:
   level: "INFO"  # DEBUG or INFO
