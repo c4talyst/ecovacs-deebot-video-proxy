@@ -61,6 +61,8 @@ ECOVACS_ERROR_MAP: dict[int, str] = {
     323: "Dirty Water Tank Missing",
 }
 
+# Optional accessory detection codes (e.g. auto-refill plumbing module not installed in station)
+OPTIONAL_ACCESSORY_CODES = {314, 315}
 
 @dataclass
 class RobotState:
@@ -456,7 +458,7 @@ class RobotStateTracker:
 
     def _parse_error_codes(self, raw_codes: set[int] | list[int]) -> None:
         """Resolve numeric Ecovacs error codes into user-facing alert messages."""
-        valid_codes = [c for c in raw_codes if isinstance(c, int) and c > 0]
+        valid_codes = [c for c in raw_codes if isinstance(c, int) and c > 0 and c not in OPTIONAL_ACCESSORY_CODES]
         self.state.error_codes = sorted(set(valid_codes))
 
         alerts: list[str] = []

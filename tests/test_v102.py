@@ -137,10 +137,14 @@ def test_robot_state() -> None:
     assert "Filter Low" in tracker.state.maintenance_alerts[0]
 
     tracker._parse_error_codes([322, 314])
-    assert 322 in tracker.state.error_codes
-    assert 314 in tracker.state.error_codes
-    assert "Clean Water Tank Malfunction" in tracker.state.error_alerts
-    assert "Heavy-duty Cleaning Solution Empty" in tracker.state.error_alerts
+    assert tracker.state.error_codes == [322]
+    assert tracker.state.error_alerts == ["Clean Water Tank Malfunction"]
+    assert tracker.state.error_msg == "Clean Water Tank Malfunction"
+
+    tracker._parse_error_codes([314])
+    assert tracker.state.error_codes == []
+    assert tracker.state.error_alerts == []
+    assert tracker.state.error_msg == ""
     print("  -> RobotState logic & response parsing OK.")
 
 
