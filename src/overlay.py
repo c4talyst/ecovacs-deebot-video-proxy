@@ -97,38 +97,38 @@ class StreamOverlay:
         # Hardware & station malfunction alerts (shown with highest priority)
         if state.error_alerts:
             for alert in state.error_alerts[:2]:
-                chips.append((f"🚨 {alert}", (248, 113, 113)))
+                chips.append((f"⚠ ALERT: {alert}", (248, 113, 113)))
+
         if self.config.show_timestamp:
             ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             chips.append((ts_str, (220, 225, 235)))
 
         if self.config.show_robot_name and robot_name:
-            chips.append((f"🤖 {robot_name}", (147, 197, 253)))
+            chips.append((robot_name, (147, 197, 253)))
 
         if self.config.show_battery:
             chg = " ⚡" if state.is_charging else ""
             bat_color = (74, 222, 128) if state.battery >= 40 else (250, 204, 21) if state.battery >= 20 else (248, 113, 113)
-            chips.append((f"🔋 {state.battery}%{chg}", bat_color))
+            chips.append((f"BAT: {state.battery}%{chg}", bat_color))
 
         if self.config.show_mode:
             clean_str = self._format_clean_status(state.clean_status)
             color = (56, 189, 248) if "Clean" in clean_str else (167, 139, 250) if "Return" in clean_str else (156, 163, 175)
-            chips.append((f"Mode: {clean_str}", color))
+            chips.append((f"MODE: {clean_str}", color))
 
         if self.config.show_station and state.station_status:
             stn_str = self._format_station_status(state.station_status)
             stn_color = (244, 114, 182) if stn_str != "Idle" else (148, 163, 184)
-            chips.append((f"Station: {stn_str}", stn_color))
+            chips.append((f"STATION: {stn_str}", stn_color))
 
         if self.config.show_maintenance:
             if state.maintenance_alerts:
-                alert_text = "⚠️ " + ", ".join(state.maintenance_alerts[:2])
+                alert_text = "⚠ MAINT: " + ", ".join(state.maintenance_alerts[:2])
                 chips.append((alert_text, (251, 146, 60)))
             elif state.maintenance:
                 # Show lowest consumable
                 lowest_item = min(state.maintenance.items(), key=lambda x: x[1])
-                chips.append((f"Maint: {lowest_item[0]} {lowest_item[1]}%", (148, 163, 184)))
-
+                chips.append((f"MAINT: {lowest_item[0]} {lowest_item[1]}%", (148, 163, 184)))
         if not chips:
             return frame
 
@@ -264,7 +264,7 @@ class StreamOverlay:
         if st.error_alerts:
             alert_text = " • ".join(st.error_alerts).upper()
             draw.rounded_rectangle([cx + 40, cy + 110, cx + card_w - 40, cy + 152], radius=8, fill=(80, 20, 25), outline=(239, 68, 68), width=1)
-            draw.text((cx + 56, cy + 122), f"🚨 ALERT: {alert_text}", fill=(254, 202, 202), font=self._font_16)
+            draw.text((cx + 56, cy + 122), f"⚠ ALERT: {alert_text}", fill=(254, 202, 202), font=self._font_16)
         else:
             draw.text(
                 (cx + 40, cy + 112),

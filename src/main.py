@@ -503,7 +503,11 @@ class EcovacsRtspBridge:
         _LOGGER.info("Shutting down Ecovacs Deebot Video Proxy...")
         self.stop_event.set()
         if self.state_tracker:
-            asyncio.create_task(self.state_tracker.stop())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.state_tracker.stop())
+            except RuntimeError:
+                pass
         if self.pipeliner:
             self.pipeliner.stop()
         if self.mediamtx_proc:
