@@ -293,7 +293,7 @@ class EcovacsRtspBridge:
 
         web_port = int(os.environ.get("WEB_PORT", 8080))
         web_service = WebUIService(self, port=web_port)
-        web_runner = web.AppRunner(web_service.app)
+        web_runner = web.AppRunner(web_service.app, access_log=None)
         await web_runner.setup()
         site = web.TCPSite(web_runner, "0.0.0.0", web_port)
         await site.start()
@@ -503,7 +503,11 @@ class EcovacsRtspBridge:
         _LOGGER.info("Shutting down Ecovacs Deebot Video Proxy...")
         self.stop_event.set()
         if self.state_tracker:
-            asyncio.create_task(self.state_tracker.stop())
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.state_tracker.stop())
+            except RuntimeError:
+                pass
         if self.pipeliner:
             self.pipeliner.stop()
         if self.mediamtx_proc:
@@ -522,10 +526,27 @@ def main() -> None:
     )
     logging.getLogger().setLevel(getattr(logging, cfg.log_level, logging.INFO))
 
-    # Silence high-frequency per-packet RTP spam unless explicitly requested
-    aiortc_level = os.environ.get("AIORTC_LOG_LEVEL", "INFO").upper()
-    for noisy in ("aiortc.rtcrtpreceiver", "aiortc.rtpsender", "aiortc.rtcrtpsender"):
-        logging.getLogger(noisy).setLevel(getattr(logging, aiortc_level, logging.INFO))
+    # Silence high-frequency transport noise (STUN/TURN/ICE, DTLS, WebSockets, and RTP)
+    aiortc_level = os.environ.get("AIORTC_LOG_LEVEL", "WARNING").upper()
+    noisy_loggers = (
+        "aioice",
+        "aioice.ice",
+        "aioice.turn",
+        "aioice.stun",
+        "aiortc",
+        "aiortc.rtcrtpreceiver",
+        "aiortc.rtpsender",
+        "aiortc.rtcrtpsender",
+        "aiortc.rtcpeerconnection",
+        "aiortc.rtcdtlstransport",
+        "aiortc.rtcsctptransport",
+        "websockets",
+        "websockets.client",
+        "websockets.protocol",
+        "asyncio",
+    )
+    for noisy in noisy_loggers:
+        logging.getLogger(noisy).setLevel(getattr(logging, aiortc_level, logging.WARNING))
     bridge = EcovacsRtspBridge(cfg)
 
     loop = asyncio.new_event_loop()

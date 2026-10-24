@@ -306,6 +306,10 @@ HTML_UI = """<!DOCTYPE html>
                 <h3 style="margin: 0;" id="dash-robot-name">Target Vacuum</h3>
                 <span style="font-weight: bold; font-size: 13px;" id="dash-status">STREAMING</span>
             </div>
+            <!-- Hardware & Station Malfunction Alert Banner -->
+            <div id="dash-malfunction-alert" style="display: none; padding: 12px 14px; background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); border-radius: 8px; margin-bottom: 14px; color: #fca5a5; font-size: 13.5px; font-weight: 600; align-items: center; gap: 8px;">
+                <span>🚨</span> <span id="dash-malfunction-text">Clean Water Tank Malfunction</span>
+            </div>
 
             <!-- Video Player -->
             <div class="stream-box">
@@ -524,6 +528,17 @@ HTML_UI = """<!DOCTYPE html>
                         }
                     }
 
+                    // Malfunction Alert Banner
+                    const malAlert = document.getElementById("dash-malfunction-alert");
+                    const malText = document.getElementById("dash-malfunction-text");
+                    if (malAlert && malText) {
+                        if (rState.error_alerts && rState.error_alerts.length > 0) {
+                            malAlert.style.display = "flex";
+                            malText.textContent = rState.error_alerts.join(" • ");
+                        } else {
+                            malAlert.style.display = "none";
+                        }
+                    }
                     // Active-only Switch
                     const switchAct = document.getElementById("switch-active-only");
                     if (switchAct && document.activeElement !== switchAct) {
@@ -987,10 +1002,11 @@ class WebUIService:
                 "station_status": "idle",
                 "is_active": False,
                 "maintenance": {},
+                "error_alerts": [],
+                "error_msg": "",
                 "manual_wake_active": False,
             },
         })
-
     async def handle_settings_overlay(self, request: web.Request) -> web.Response:
         data = await request.json()
         cfg = self.bridge.config.overlay
