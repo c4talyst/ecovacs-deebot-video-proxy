@@ -241,7 +241,6 @@ class EcovacsRtspBridge:
         while (
             not self.stop_event.is_set()
             and not self.restart_event.is_set()
-            and not self.mode_change_event.is_set()
         ):
             st = self.state_tracker.state if self.state_tracker else RobotState()
             if not self.config.streamer.active_only_video or st.is_active:
@@ -375,7 +374,6 @@ class EcovacsRtspBridge:
                         auth_getter=get_auth_tuple,
                         robot=self.robot,
                     )
-                    self.state_tracker.add_callback(lambda _: self.mode_change_event.set())
                     self.state_tracker.start()
                 except Exception as e:
                     _LOGGER.error("Authentication failed: %s. Check credentials in Web UI http://<host>:%d", e, web_port)
@@ -385,7 +383,6 @@ class EcovacsRtspBridge:
 
                 # Inner streaming loop for this robot
                 while not self.stop_event.is_set() and not self.restart_event.is_set():
-                    self.mode_change_event.clear()
 
                     # Check if active-only mode is enabled and robot is docked & inactive
                     st = self.state_tracker.state if self.state_tracker else RobotState()
@@ -472,7 +469,6 @@ class EcovacsRtspBridge:
                         while (
                             not self.stop_event.is_set()
                             and not self.restart_event.is_set()
-                            and not self.mode_change_event.is_set()
                             and not self.active_webrtc.stop_event.is_set()
                         ):
                             if self.config.streamer.active_only_video and self.state_tracker:
