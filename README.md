@@ -328,7 +328,7 @@ To publish an official immutable release (e.g. `v1.0.1`):
    *(Alternatively, create the release in GitHub under **Releases -> Draft a new release**, setting the tag to `v1.0.1`.)*
 
 The workflow validates that the tag matches `__version__` in `src/__init__.py` and automatically publishes:
-- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0.3` (exact release)
+- `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0.4` (exact release)
 - `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1.0` (latest minor)
 - `ghcr.io/c4talyst/ecovacs-deebot-video-proxy:1` (latest major)
 
