@@ -1053,9 +1053,10 @@ class WebUIService:
             self.bridge.config.streamer.standby_fps = max(1, min(10, int(data["standby_fps"])))
 
         self.save_config_file()
-        if hasattr(self.bridge, "mode_change_event"):
-            self.bridge.mode_change_event.set()
-
+        if self.bridge.config.streamer.active_only_video:
+            st = self.bridge.state_tracker.state if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker else None
+            if st and not st.is_active and self.bridge.active_webrtc:
+                asyncio.create_task(self.bridge.active_webrtc.stop())
         return web.json_response({
             "success": True,
             "active_only_video": self.bridge.config.streamer.active_only_video,
@@ -1080,10 +1081,9 @@ class WebUIService:
     async def handle_robot_sleep(self, request: web.Request) -> web.Response:
         if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker:
             self.bridge.state_tracker.clear_manual_wake()
-        if hasattr(self.bridge, "mode_change_event"):
-            self.bridge.mode_change_event.set()
+        if self.bridge.active_webrtc:
+            asyncio.create_task(self.bridge.active_webrtc.stop())
         return web.json_response({"success": True, "manual_wake_active": False})
-
     async def handle_setup_login(self, request: web.Request) -> web.Response:
         data = await request.json()
         username = str(data.get("username", "")).strip()
