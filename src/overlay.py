@@ -94,6 +94,10 @@ class StreamOverlay:
         # Gather enabled chips
         chips: list[tuple[str, tuple[int, int, int]]] = []
 
+        # Hardware & station malfunction alerts (shown with highest priority)
+        if state.error_alerts:
+            for alert in state.error_alerts[:2]:
+                chips.append((f"🚨 {alert}", (248, 113, 113)))
         if self.config.show_timestamp:
             ts_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             chips.append((ts_str, (220, 225, 235)))
@@ -256,20 +260,24 @@ class StreamOverlay:
             font=self._font_22,
         )
 
-        # Subtitle Explanation
-        draw.text(
-            (cx + 40, cy + 112),
-            "Camera and headlights are powered down to conserve energy and prevent night glare.",
-            fill=(156, 163, 175),
-            font=self._font_14,
-        )
-        draw.text(
-            (cx + 40, cy + 132),
-            "Live video resumes automatically whenever cleaning or station tasks activate.",
-            fill=(107, 114, 128),
-            font=self._font_14,
-        )
-
+        # Subtitle Explanation or Active Malfunction Alert
+        if st.error_alerts:
+            alert_text = " • ".join(st.error_alerts).upper()
+            draw.rounded_rectangle([cx + 40, cy + 110, cx + card_w - 40, cy + 152], radius=8, fill=(80, 20, 25), outline=(239, 68, 68), width=1)
+            draw.text((cx + 56, cy + 122), f"🚨 ALERT: {alert_text}", fill=(254, 202, 202), font=self._font_16)
+        else:
+            draw.text(
+                (cx + 40, cy + 112),
+                "Camera and headlights are powered down to conserve energy and prevent night glare.",
+                fill=(156, 163, 175),
+                font=self._font_14,
+            )
+            draw.text(
+                (cx + 40, cy + 132),
+                "Live video resumes automatically whenever cleaning or station tasks activate.",
+                fill=(107, 114, 128),
+                font=self._font_14,
+            )
         # Grid of Stats
         grid_y = cy + 175
 

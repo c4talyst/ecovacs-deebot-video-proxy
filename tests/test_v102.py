@@ -135,6 +135,12 @@ def test_robot_state() -> None:
     assert tracker.state.maintenance["Filter"] == 10
     assert len(tracker.state.maintenance_alerts) == 1
     assert "Filter Low" in tracker.state.maintenance_alerts[0]
+
+    tracker._parse_error_codes([322, 314])
+    assert 322 in tracker.state.error_codes
+    assert len(tracker.state.error_alerts) == 1
+    assert tracker.state.error_alerts[0] == "Clean Water Tank Malfunction"
+    assert tracker.state.error_msg == "Clean Water Tank Malfunction"
     print("  -> RobotState logic & response parsing OK.")
 
 
@@ -162,6 +168,7 @@ def test_overlay() -> None:
         clean_status="cleaning",
         station_status="idle",
         maintenance={"Filter": 85, "Main Brush": 90},
+        error_alerts=["Clean Water Tank Malfunction"],
     )
 
     out_frame = overlay.render_overlay(in_frame, st, "Deebot T30 Pro")

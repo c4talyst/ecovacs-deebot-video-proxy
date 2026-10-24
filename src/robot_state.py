@@ -21,6 +21,46 @@ import aiohttp
 
 _LOGGER = logging.getLogger("ecovacs.state")
 
+ECOVACS_ERROR_MAP: dict[int, str] = {
+    101: "Battery Low",
+    102: "Robot Off Floor",
+    103: "Driving Wheel Malfunction",
+    104: "Anti-Drop Sensor Dust",
+    105: "Robot Stuck",
+    106: "Side Brushes Expired",
+    107: "Dust Case Filter Expired",
+    108: "Side Brush Tangled",
+    109: "Main Brush Tangled",
+    110: "Dust Bin Missing",
+    111: "Bumper Stuck",
+    112: "LDS Sensor Malfunction",
+    113: "Main Brush Expired",
+    114: "Dust Bin Full",
+    120: "Water Tank Error",
+    128: "Mop Plates Missing",
+    129: "Mop Plate Jammed",
+    209: "D-ToF Sensor Malfunction",
+    301: "Clean Water Tank Empty",
+    302: "Dirty Water Tank Full",
+    303: "Clean Water Tank Missing",
+    304: "Dirty Water Tank Missing",
+    305: "Dirty Water Tank Full",
+    306: "Cleaning Sink Filter Missing",
+    307: "Auto-Clean Station Malfunction",
+    308: "Station Communication Malfunction",
+    310: "Station Lid Open",
+    311: "Replace Dust Bag",
+    312: "Dust Bag Full",
+    314: "Water Supply / Ion Module Missing",
+    315: "Water Supply Module Missing",
+    316: "Cleaning Sink Full",
+    317: "Clean Water Refill Malfunction",
+    318: "Dirty Water Tank Full",
+    319: "Cleaning Solution Low",
+    322: "Clean Water Tank Malfunction",
+    323: "Dirty Water Tank Missing",
+}
+
 
 @dataclass
 class RobotState:
@@ -34,6 +74,8 @@ class RobotState:
     maintenance_alerts: list[str] = field(default_factory=list)
     error_code: int = 0
     error_msg: str = ""
+    error_codes: list[int] = field(default_factory=list)
+    error_alerts: list[str] = field(default_factory=list)
     last_updated: float = 0.0
     manual_wake_until: float = 0.0
 
@@ -75,6 +117,8 @@ class RobotState:
             "maintenance_alerts": self.maintenance_alerts,
             "error_code": self.error_code,
             "error_msg": self.error_msg,
+            "error_codes": self.error_codes,
+            "error_alerts": self.error_alerts,
             "is_active": self.is_active,
             "manual_wake_active": time.time() < self.manual_wake_until,
             "last_updated": self.last_updated,
@@ -410,6 +454,26 @@ class RobotStateTracker:
             self.state.maintenance = maint
         self.state.maintenance_alerts = alerts
 
+    def _parse_error_codes(self, raw_codes: set[int] | list[int]) -> None:
+        """Resolve numeric Ecovacs error codes into user-facing alert messages."""
+        valid_codes = [c for c in raw_codes if isinstance(c, int) and c > 0]
+        self.state.error_codes = sorted(set(valid_codes))
+
+        alerts: list[str] = []
+        for c in self.state.error_codes:
+            # If 322 (clean water tank malfunction) is active, don't spam 314 (supply module)
+            if c == 314 and 322 in self.state.error_codes:
+                continue
+            msg = ECOVACS_ERROR_MAP.get(c, f"Malfunction #{c}")
+            if msg and msg not in alerts:
+                alerts.append(msg)
+
+        self.state.error_alerts = alerts
+        self.state.error_code = self.state.error_codes[0] if self.state.error_codes else 0
+        self.state.error_msg = alerts[0] if alerts else ""
+        if alerts:
+            _LOGGER.warning("Active robot/station alert: %s (codes=%s)", self.state.error_msg, self.state.error_codes)
+
     async def poll_once(self) -> RobotState:
         """Poll telemetry from Ecovacs cloud."""
         session = self.session_getter()
@@ -442,7 +506,40 @@ class RobotStateTracker:
         if res_chg:
             self._parse_charge_response(res_chg)
 
-        # 4. Fallback clean & station info if getWorkState is unsupported on older firmware
+        # 4. Query Station State & Errors (always poll for station tasks and errors)
+        error_codes: set[int] = set()
+
+        res_stn = await self._send_ngiot_command(session, portal_token, "getStationState")
+        if not res_stn:
+            res_stn = await self._send_devmanager_command(session, portal_url, user_id, "getStationState")
+        if res_stn:
+            self._parse_station_response(res_stn)
+            body = self._extract_payload(res_stn)
+            content = body.get("content") or {}
+            if isinstance(content, dict):
+                e_list = content.get("error") or []
+                if isinstance(e_list, list):
+                    for c in e_list:
+                        if isinstance(c, (int, str)) and str(c).isdigit():
+                            error_codes.add(int(c))
+
+        # 5. Query Robot Faults (getError)
+        res_err = await self._send_ngiot_command(session, portal_token, "getError")
+        if not res_err:
+            res_err = await self._send_devmanager_command(session, portal_url, user_id, "getError")
+        if res_err:
+            body = self._extract_payload(res_err)
+            c_list = body.get("code") or []
+            if isinstance(c_list, list):
+                for c in c_list:
+                    if isinstance(c, (int, str)) and str(c).isdigit():
+                        error_codes.add(int(c))
+            elif isinstance(c_list, (int, str)) and str(c_list).isdigit():
+                error_codes.add(int(c_list))
+
+        self._parse_error_codes(error_codes)
+
+        # 6. Fallback clean info if getWorkState is unsupported on older firmware
         if not work_parsed:
             res_cln = await self._send_ngiot_command(session, portal_token, "getCleanInfo_V2")
             if not res_cln:
@@ -451,13 +548,6 @@ class RobotStateTracker:
                 res_cln = await self._send_devmanager_command(session, portal_url, user_id, "getCleanInfo")
             if res_cln:
                 self._parse_clean_response(res_cln)
-
-            res_stn = await self._send_ngiot_command(session, portal_token, "getStationState")
-            if not res_stn:
-                res_stn = await self._send_devmanager_command(session, portal_url, user_id, "getStationState")
-            if res_stn:
-                self._parse_station_response(res_stn)
-        # 5. Query lifespan every ~60s
         now = time.time()
         if not self.state.maintenance or (now - self.state.last_updated > 60):
             res_life = await self._send_ngiot_command(
