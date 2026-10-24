@@ -213,7 +213,8 @@ class EcovacsRtspBridge:
     def on_video_frame(self, frame: VideoFrame) -> None:
         """Feed frame to FFmpeg RTSP publisher and generate occasional JPEG for Web UI."""
         self.is_standby = False
-        robot_name = (self.robot or {}).get("name") or "Deebot Vacuum"
+        r = self.robot or {}
+        robot_name = r.get("nick") or r.get("deviceName") or r.get("name") or "Deebot Vacuum"
         st = self.state_tracker.state if self.state_tracker else RobotState()
         final_frame = self.overlay.render_overlay(frame, st, robot_name)
 
@@ -233,7 +234,8 @@ class EcovacsRtspBridge:
         """Feed low-framerate standby card to keep MediaMTX RTSP listener alive and showing telemetry."""
         target_fps = max(1, self.config.streamer.standby_fps)
         interval = 1.0 / target_fps
-        robot_name = (self.robot or {}).get("name") or "Deebot Vacuum"
+        r = self.robot or {}
+        robot_name = r.get("nick") or r.get("deviceName") or r.get("name") or "Deebot Vacuum"
 
         _LOGGER.info("Entering standby mode (Robot/Station inactive). Video stream paused, headlights off.")
         while (

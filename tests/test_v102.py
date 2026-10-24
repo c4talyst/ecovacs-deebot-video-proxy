@@ -98,6 +98,22 @@ def test_robot_state() -> None:
         auth_getter=lambda: ("", "", ""),
         robot={"did": "test_did", "class": "test_class", "resource": "res"},
     )
+    tracker._parse_work_state({
+        "body": {
+            "data": {
+                "paused": 0,
+                "robotState": {
+                    "cleanState": {"type": "freeClean"},
+                    "state": "cleaning",
+                },
+                "stationState": {"state": "idle"}
+            }
+        }
+    })
+    assert tracker.state.clean_status == "cleaning"
+    assert tracker.state.clean_mode == "freeClean"
+    assert tracker.state.is_active is True
+
     tracker._parse_battery_response({"body": {"data": {"value": 84}}})
     assert tracker.state.battery == 84, f"Expected 84, got {tracker.state.battery}"
 

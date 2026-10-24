@@ -953,7 +953,8 @@ class WebUIService:
             (self.bridge.config.ecovacs.access_token and self.bridge.config.ecovacs.user_id)
             or (self.bridge.config.ecovacs.username and self.bridge.config.ecovacs.password)
         )
-        robot_name = (self.bridge.robot or {}).get("name") if hasattr(self.bridge, "robot") and self.bridge.robot else "Ecovacs Deebot"
+        r = self.bridge.robot if hasattr(self.bridge, "robot") and self.bridge.robot else {}
+        robot_name = r.get("nick") or r.get("deviceName") or r.get("name") or "Ecovacs Deebot"
         st = self.bridge.state_tracker.state if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker else None
 
         return web.json_response({

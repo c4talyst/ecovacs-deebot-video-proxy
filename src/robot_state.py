@@ -260,6 +260,48 @@ class RobotStateTracker:
         if isinstance(inner_data, dict):
             return inner_data
         return data
+    def _parse_work_state(self, data: dict[str, Any]) -> bool:
+        """Extract live robot and station state from getWorkState."""
+        body = self._extract_payload(data)
+        robot_state = body.get("robotState")
+        if not isinstance(robot_state, dict):
+            return False
+
+        r_state = str(robot_state.get("state") or "").lower()
+        clean_state = robot_state.get("cleanState")
+        if isinstance(clean_state, dict):
+            c_type = str(clean_state.get("type") or "").strip()
+            if c_type:
+                self.state.clean_mode = c_type
+
+        paused = bool(body.get("paused"))
+        if paused or r_state == "paused":
+            self.state.clean_status = "paused"
+        elif r_state:
+            if any(k in r_state for k in ("clean", "sweep", "mop", "work")):
+                self.state.clean_status = "cleaning"
+            elif any(k in r_state for k in ("dock", "charge", "slot", "sleep")):
+                self.state.clean_status = "docked"
+            elif "return" in r_state or "back" in r_state:
+                self.state.clean_status = "returning"
+            else:
+                self.state.clean_status = r_state
+
+        station_state = body.get("stationState")
+        if isinstance(station_state, dict):
+            s_state = str(station_state.get("state") or "").lower()
+            if any(k in s_state for k in ("wash", "mop_wash")):
+                self.state.station_status = "washing_mop"
+            elif any(k in s_state for k in ("dry", "mop_dry")):
+                self.state.station_status = "drying_mop"
+            elif any(k in s_state for k in ("empty", "dust", "collect")):
+                self.state.station_status = "emptying"
+            elif s_state in ("idle", "none", "standby", "0"):
+                self.state.station_status = "idle"
+            elif s_state:
+                self.state.station_status = s_state
+
+        return True
 
     def _parse_charge_response(self, data: dict[str, Any]) -> None:
         """Extract battery and charging status."""
@@ -378,36 +420,43 @@ class RobotStateTracker:
         if not portal_token:
             return self.state
 
-        # 1. Query battery
+        # 1. Query live work state (modern Ecovacs protocol, e.g. X1/X2/X11/T20/T30)
+        work_parsed = False
+        res_work = await self._send_ngiot_command(session, portal_token, "getWorkState")
+        if not res_work:
+            res_work = await self._send_devmanager_command(session, portal_url, user_id, "getWorkState")
+        if res_work:
+            work_parsed = self._parse_work_state(res_work)
+
+        # 2. Query battery
         res_bat = await self._send_ngiot_command(session, portal_token, "getBattery")
         if not res_bat:
             res_bat = await self._send_devmanager_command(session, portal_url, user_id, "getBattery")
         if res_bat:
             self._parse_battery_response(res_bat)
 
-        # 2. Query charge state
+        # 3. Query charge state
         res_chg = await self._send_ngiot_command(session, portal_token, "getChargeState")
         if not res_chg:
             res_chg = await self._send_devmanager_command(session, portal_url, user_id, "getChargeState")
         if res_chg:
             self._parse_charge_response(res_chg)
 
-        # 3. Query clean info
-        res_cln = await self._send_ngiot_command(session, portal_token, "getCleanInfo_V2")
-        if not res_cln:
-            res_cln = await self._send_ngiot_command(session, portal_token, "getCleanInfo")
-        if not res_cln:
-            res_cln = await self._send_devmanager_command(session, portal_url, user_id, "getCleanInfo")
-        if res_cln:
-            self._parse_clean_response(res_cln)
+        # 4. Fallback clean & station info if getWorkState is unsupported on older firmware
+        if not work_parsed:
+            res_cln = await self._send_ngiot_command(session, portal_token, "getCleanInfo_V2")
+            if not res_cln:
+                res_cln = await self._send_ngiot_command(session, portal_token, "getCleanInfo")
+            if not res_cln:
+                res_cln = await self._send_devmanager_command(session, portal_url, user_id, "getCleanInfo")
+            if res_cln:
+                self._parse_clean_response(res_cln)
 
-        # 4. Query station state
-        res_stn = await self._send_ngiot_command(session, portal_token, "getStationState")
-        if not res_stn:
-            res_stn = await self._send_devmanager_command(session, portal_url, user_id, "getStationState")
-        if res_stn:
-            self._parse_station_response(res_stn)
-
+            res_stn = await self._send_ngiot_command(session, portal_token, "getStationState")
+            if not res_stn:
+                res_stn = await self._send_devmanager_command(session, portal_url, user_id, "getStationState")
+            if res_stn:
+                self._parse_station_response(res_stn)
         # 5. Query lifespan every ~60s
         now = time.time()
         if not self.state.maintenance or (now - self.state.last_updated > 60):
