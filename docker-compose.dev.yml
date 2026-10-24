@@ -17,7 +17,7 @@ services:
       # Persistent config storage
       - ./config:/config
     environment:
-      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WEB_PORT=${WEB_PORT:-8080}
       - RTSP_PATH=${RTSP_PATH:-live}
       - RTSP_PORT=${RTSP_PORT:-8554}
@@ -31,6 +31,6 @@ services:
       - ECOVACS_USER_ID=${ECOVACS_USER_ID:-}
       - ECOVACS_PIN=${ECOVACS_PIN:-}
       - ECOVACS_ROBOT_DID=${ECOVACS_ROBOT_DID:-}
-      - ACTIVE_ONLY_VIDEO=${ACTIVE_ONLY_VIDEO:-false}
-      - OVERLAY_ENABLED=${OVERLAY_ENABLED:-true}
-      - OVERLAY_POSITION=${OVERLAY_POSITION:-top_left}
+      - ACTIVE_ONLY_VIDEO=${ACTIVE_ONLY_VIDEO:-}
+      - OVERLAY_ENABLED=${OVERLAY_ENABLED:-}
+      - OVERLAY_POSITION=${OVERLAY_POSITION:-}

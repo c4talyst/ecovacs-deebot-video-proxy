@@ -117,14 +117,16 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     # 2. Try loading .env
     env_file = _load_env_file(Path("/config/.env")) or _load_env_file(Path(".env"))
     def get_val(env_key: str, yaml_section: str, yaml_key: str, default: Any) -> Any:
-        # Env var in os.environ > .env file > YAML config > default
-        if env_key in os.environ and os.environ[env_key].strip():
-            return os.environ[env_key].strip()
-        if env_key in env_file and env_file[env_key].strip():
-            return env_file[env_key].strip()
+        # 1. Saved YAML config in config.yaml takes precedence for persisted Web UI settings
         section = raw_cfg.get(yaml_section)
         if isinstance(section, dict) and yaml_key in section and section[yaml_key] is not None:
             return section[yaml_key]
+        # 2. Environment variable (e.g. headless setup or manual docker run)
+        if env_key in os.environ and os.environ[env_key].strip():
+            return os.environ[env_key].strip()
+        # 3. .env file
+        if env_key in env_file and env_file[env_key].strip():
+            return env_file[env_key].strip()
         return default
 
     eco = EcovacsConfig(
