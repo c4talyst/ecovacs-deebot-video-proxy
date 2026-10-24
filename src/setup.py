@@ -125,6 +125,18 @@ async def run_setup() -> None:
                 "reconnect_delay_seconds": 5,
                 "appping_interval_seconds": 35,
                 "stream_timeout_seconds": 30,
+                "active_only_video": False,
+                "standby_fps": 2,
+            },
+            "overlay": {
+                "enabled": True,
+                "show_timestamp": True,
+                "show_battery": True,
+                "show_mode": True,
+                "show_station": True,
+                "show_maintenance": True,
+                "show_robot_name": True,
+                "position": "top_left",
             },
             "logging": {
                 "level": "INFO",
@@ -154,6 +166,15 @@ RTSP_FPS=16
 RTSP_BITRATE="1500k"
 RTSP_USERNAME="{rtsp_user}"
 RTSP_PASSWORD="{rtsp_pass}"
+ACTIVE_ONLY_VIDEO="false"
+OVERLAY_ENABLED="true"
+OVERLAY_SHOW_TIMESTAMP="true"
+OVERLAY_SHOW_BATTERY="true"
+OVERLAY_SHOW_MODE="true"
+OVERLAY_SHOW_STATION="true"
+OVERLAY_SHOW_MAINTENANCE="true"
+OVERLAY_SHOW_ROBOT_NAME="true"
+OVERLAY_POSITION="top_left"
 LOG_LEVEL="INFO"
 """
         with open(env_file, "w", encoding="utf-8") as f:

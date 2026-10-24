@@ -1,9 +1,10 @@
 """Web UI & Setup Wizard Server for Ecovacs Deebot Video Proxy.
 
 Provides a clean browser-based interface for:
-1. Unraid / Proxmox / Docker initial setup (email verification, robot discovery).
-2. Live stream monitor and RTSP stream URL display.
-3. Telemetry and settings management.
+1. Initial setup wizard (email verification, robot discovery, RTSP credentials).
+2. Live stream monitor and RTSP / WebRTC / HLS feed URLs.
+3. Power-saving streaming controls ("Only enable video when Robot or Station is Active").
+4. Real-time On-Screen Display (OSD) overlay customizer (timestamp, battery, mode, maintenance).
 """
 
 from __future__ import annotations
@@ -57,7 +58,7 @@ HTML_UI = """<!DOCTYPE html>
         .header {
             text-align: center; margin-bottom: 24px;
         }
-        .header h1 { margin: 0 0 6px 0; font-size: 24px; font-weight: 700; }
+        .header h1 { margin: 0 0 6px 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
         .header p { margin: 0; color: var(--text-muted); font-size: 14px; }
 
         .card {
@@ -87,7 +88,7 @@ HTML_UI = """<!DOCTYPE html>
 
         .form-group { margin-bottom: 16px; }
         label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
-        .hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
+        .hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
         input, select {
             width: 100%; padding: 10px 12px; background: var(--surface);
             border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 14px;
@@ -103,6 +104,9 @@ HTML_UI = """<!DOCTYPE html>
         }
         .btn:hover { background: var(--accent-hover); }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-sm {
+            padding: 6px 12px; font-size: 12px; width: auto; border-radius: 6px;
+        }
         .btn-outline {
             background: transparent; border: 1px solid var(--border); color: var(--text);
         }
@@ -137,12 +141,69 @@ HTML_UI = """<!DOCTYPE html>
         .stream-box {
             background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16 / 9;
             width: 100%; display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+            border: 1px solid var(--border); position: relative;
         }
         .stream-box img { width: 100%; height: 100%; object-fit: contain; }
         .url-box {
             background: var(--surface); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border);
             font-family: monospace; font-size: 13px; color: #60a5fa; margin-bottom: 16px;
             display: flex; align-items: center; justify-content: space-between; word-break: break-all;
+        }
+
+        /* Toggle Switches */
+        .switch-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 14px; background: var(--surface); border-radius: 8px;
+            border: 1px solid var(--border); margin-bottom: 12px;
+        }
+        .switch-info { flex: 1; padding-right: 16px; }
+        .switch-title { font-size: 13.5px; font-weight: 600; margin-bottom: 2px; }
+        .switch-desc { font-size: 11.5px; color: var(--text-muted); line-height: 1.35; }
+        .switch {
+            position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: var(--border); transition: .2s; border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px;
+            background-color: white; transition: .2s; border-radius: 50%;
+        }
+        input:checked + .slider { background-color: var(--accent); }
+        input:checked + .slider:before { transform: translateX(20px); }
+
+        /* Chips */
+        .chip-grid {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; margin-bottom: 14px;
+        }
+        .chip {
+            padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+            cursor: pointer; user-select: none; border: 1px solid var(--border);
+            background: var(--surface); color: var(--text-muted); transition: all 0.15s ease;
+            display: inline-flex; align-items: center; gap: 6px;
+        }
+        .chip.active {
+            background: rgba(59, 130, 246, 0.15); border-color: var(--accent); color: #93c5fd;
+        }
+        .chip:hover { border-color: var(--accent); }
+
+        /* Telemetry Cards */
+        .telemetry-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px; margin-bottom: 16px;
+        }
+        .tele-box {
+            background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+            padding: 10px 12px;
+        }
+        .tele-title { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 4px; }
+        .tele-value { font-size: 14.5px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px; }
+
+        .badge-pill {
+            display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px;
+            font-weight: 600; text-transform: uppercase;
         }
     </style>
 </head>
@@ -243,13 +304,102 @@ HTML_UI = """<!DOCTYPE html>
         <div class="card stream-view" id="dashboard-card">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                 <h3 style="margin: 0;" id="dash-robot-name">Target Vacuum</h3>
-                <span style="color: var(--success); font-weight: bold; font-size: 13px;" id="dash-status">STREAMING</span>
+                <span style="font-weight: bold; font-size: 13px;" id="dash-status">STREAMING</span>
             </div>
 
+            <!-- Video Player -->
             <div class="stream-box">
                 <img id="dash-img" src="/mjpeg" alt="Live Stream">
             </div>
 
+            <!-- Telemetry Overview Bar -->
+            <div class="telemetry-grid">
+                <div class="tele-box">
+                    <div class="tele-title">Battery</div>
+                    <div class="tele-value" id="tele-battery">--</div>
+                </div>
+                <div class="tele-box">
+                    <div class="tele-title">Robot Mode</div>
+                    <div class="tele-value" id="tele-mode">--</div>
+                </div>
+                <div class="tele-box">
+                    <div class="tele-title">Station</div>
+                    <div class="tele-value" id="tele-station">--</div>
+                </div>
+                <div class="tele-box">
+                    <div class="tele-title">Camera / Light</div>
+                    <div class="tele-value" id="tele-camera" style="font-size: 12.5px;">--</div>
+                </div>
+            </div>
+
+            <!-- Section 1: Power & Headlight Sleep Control -->
+            <div class="switch-row">
+                <div class="switch-info">
+                    <div class="switch-title">Only enable video when Robot or Station is Active</div>
+                    <div class="switch-desc">
+                        Powers down the camera and turns off headlights when docked to eliminate nighttime lights. RTSP listener stays alive in standby.
+                    </div>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="switch-active-only" onchange="toggleActiveOnly(this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div id="wake-box" style="display: none; margin-bottom: 16px; padding: 10px 14px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; justify-content: space-between; align-items: center;">
+                <span style="font-size: 12.5px; color: #93c5fd;" id="wake-label">Robot is docked. Headlights are off.</span>
+                <button class="btn btn-sm btn-outline" id="btn-wake" onclick="toggleWakeCamera()">Wake Camera (5 min)</button>
+            </div>
+
+            <!-- Section 2: On-Stream Stats Overlay (OSD) -->
+            <div class="card" style="padding: 16px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 16px;">
+                <div class="switch-row" style="padding: 0; background: transparent; border: none; margin-bottom: 6px;">
+                    <div class="switch-info">
+                        <div class="switch-title">Show Stats Overlay on Video Stream</div>
+                        <div class="switch-desc">Burn real-time telemetry into the RTSP & Web video feed. Toggle fields live below:</div>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="switch-overlay-enabled" onchange="toggleOverlayMain(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div id="overlay-fields-container" style="display: none;">
+                    <div class="chip-grid">
+                        <div class="chip" id="chip-show_timestamp" onclick="toggleOverlayField('show_timestamp')">
+                            <span>⏱️ Timestamp</span>
+                        </div>
+                        <div class="chip" id="chip-show_battery" onclick="toggleOverlayField('show_battery')">
+                            <span>🔋 Battery</span>
+                        </div>
+                        <div class="chip" id="chip-show_mode" onclick="toggleOverlayField('show_mode')">
+                            <span>🤖 Mode & Clean</span>
+                        </div>
+                        <div class="chip" id="chip-show_station" onclick="toggleOverlayField('show_station')">
+                            <span>🏠 Station State</span>
+                        </div>
+                        <div class="chip" id="chip-show_maintenance" onclick="toggleOverlayField('show_maintenance')">
+                            <span>🛠️ Maintenance</span>
+                        </div>
+                        <div class="chip" id="chip-show_robot_name" onclick="toggleOverlayField('show_robot_name')">
+                            <span>🏷️ Robot Name</span>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                        <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Overlay Position:</span>
+                        <select id="select-overlay-pos" style="width: auto; padding: 6px 10px; font-size: 12.5px;" onchange="changeOverlayPosition(this.value)">
+                            <option value="top_left">Top-Left (Default)</option>
+                            <option value="top_right">Top-Right</option>
+                            <option value="bottom_left">Bottom-Left</option>
+                            <option value="bottom_right">Bottom-Right</option>
+                            <option value="top_banner">Top Banner (Full Width)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feed URLs -->
             <div style="margin-bottom: 14px;">
                 <label>RTSP Stream URL (Frigate / VLC / Go2RTC):</label>
                 <div class="url-box" id="rtsp-url-display">rtsp://localhost:8554/live</div>
@@ -276,6 +426,8 @@ HTML_UI = """<!DOCTYPE html>
         let discoveredRobots = [];
         let selectedDID = "";
         let hostIP = window.location.hostname;
+        let cachedOverlayConfig = {};
+        let currentManualWake = false;
 
         function setAlert(type, msg) {
             ['error', 'success', 'info'].forEach(t => {
@@ -314,6 +466,7 @@ HTML_UI = """<!DOCTYPE html>
                     document.getElementById("setup-card").style.display = "none";
                     document.getElementById("dashboard-card").style.display = "block";
                     document.getElementById("dash-robot-name").textContent = data.robotName || "Ecovacs Vacuum";
+
                     const credPrefix = data.hasAuth ? (encodeURIComponent(data.rtspUser) + ":••••••@") : "";
                     const rtspUrl = "rtsp://" + credPrefix + hostIP + ":" + (data.rtspPort || 8554) + "/" + (data.rtspPath || "live");
                     const webrtcUrl = "http://" + credPrefix + hostIP + ":" + (data.webrtcPort || 8889) + "/" + (data.rtspPath || "live") + "/whep";
@@ -325,17 +478,198 @@ HTML_UI = """<!DOCTYPE html>
                     const hlsEl = document.getElementById("hls-url-display");
                     if (hlsEl) hlsEl.textContent = hlsUrl;
 
+                    // Stream & Standby Status Badge
                     const statusEl = document.getElementById("dash-status");
                     if (statusEl) {
-                        statusEl.textContent = data.streaming ? "STREAMING" : "CONNECTING...";
-                        statusEl.style.color = data.streaming ? "var(--success)" : "var(--warning)";
+                        if (data.isStandby) {
+                            statusEl.textContent = "STANDBY (CAMERA OFF)";
+                            statusEl.style.color = "#60a5fa";
+                        } else if (data.streaming) {
+                            statusEl.textContent = "LIVE STREAMING";
+                            statusEl.style.color = "var(--success)";
+                        } else {
+                            statusEl.textContent = "CONNECTING...";
+                            statusEl.style.color = "var(--warning)";
+                        }
                     }
+
+                    // Telemetry Grid
+                    const rState = data.robotState || {};
+                    const batEl = document.getElementById("tele-battery");
+                    if (batEl) {
+                        const chg = rState.is_charging ? " ⚡" : "";
+                        batEl.textContent = (rState.battery !== undefined ? rState.battery : 100) + "%" + chg;
+                    }
+                    const modeEl = document.getElementById("tele-mode");
+                    if (modeEl) {
+                        const cStatus = (rState.clean_status || "Docked").replace("_", " ");
+                        modeEl.textContent = cStatus.charAt(0).toUpperCase() + cStatus.slice(1);
+                    }
+                    const stnEl = document.getElementById("tele-station");
+                    if (stnEl) {
+                        const sStatus = (rState.station_status || "Idle").replace("_", " ");
+                        stnEl.textContent = sStatus.charAt(0).toUpperCase() + sStatus.slice(1);
+                    }
+                    const camEl = document.getElementById("tele-camera");
+                    if (camEl) {
+                        if (data.isStandby) {
+                            camEl.textContent = "Off (Docked)";
+                            camEl.style.color = "#93c5fd";
+                        } else if (data.streaming) {
+                            camEl.textContent = "Active (Lights On)";
+                            camEl.style.color = "var(--success)";
+                        } else {
+                            camEl.textContent = "Standby";
+                            camEl.style.color = "var(--text-muted)";
+                        }
+                    }
+
+                    // Active-only Switch
+                    const switchAct = document.getElementById("switch-active-only");
+                    if (switchAct && document.activeElement !== switchAct) {
+                        switchAct.checked = !!data.activeOnlyVideo;
+                    }
+
+                    // Wake camera box
+                    const wakeBox = document.getElementById("wake-box");
+                    const wakeBtn = document.getElementById("btn-wake");
+                    const wakeLabel = document.getElementById("wake-label");
+                    currentManualWake = !!rState.manual_wake_active;
+
+                    if (wakeBox && wakeBtn) {
+                        if (data.activeOnlyVideo && (data.isStandby || currentManualWake)) {
+                            wakeBox.style.display = "flex";
+                            if (currentManualWake) {
+                                wakeLabel.textContent = "Camera manually awakened. Streaming live.";
+                                wakeBtn.textContent = "Turn Off (Sleep)";
+                            } else {
+                                wakeLabel.textContent = "Robot is docked. Headlights and camera are off.";
+                                wakeBtn.textContent = "Wake Camera (5 min)";
+                            }
+                        } else {
+                            wakeBox.style.display = "none";
+                        }
+                    }
+
+                    // Overlay Config
+                    cachedOverlayConfig = data.overlay || {};
+                    const switchOver = document.getElementById("switch-overlay-enabled");
+                    if (switchOver && document.activeElement !== switchOver) {
+                        switchOver.checked = !!cachedOverlayConfig.enabled;
+                    }
+
+                    const overContainer = document.getElementById("overlay-fields-container");
+                    if (overContainer) {
+                        overContainer.style.display = cachedOverlayConfig.enabled ? "block" : "none";
+                    }
+
+                    // Update chips
+                    ['show_timestamp', 'show_battery', 'show_mode', 'show_station', 'show_maintenance', 'show_robot_name'].forEach(field => {
+                        const chip = document.getElementById("chip-" + field);
+                        if (chip) {
+                            if (cachedOverlayConfig[field]) {
+                                chip.classList.add("active");
+                            } else {
+                                chip.classList.remove("active");
+                            }
+                        }
+                    });
+
+                    // Update position
+                    const posSelect = document.getElementById("select-overlay-pos");
+                    if (posSelect && document.activeElement !== posSelect) {
+                        posSelect.value = cachedOverlayConfig.position || "top_left";
+                    }
+
                 } else {
                     document.getElementById("setup-card").style.display = "block";
                     document.getElementById("dashboard-card").style.display = "none";
                 }
             } catch (e) {
                 console.error("Status check failed", e);
+            }
+        }
+
+        async function toggleActiveOnly(checked) {
+            try {
+                await fetch("/api/settings/stream", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ active_only_video: checked })
+                });
+                await checkStatus();
+            } catch (e) {
+                console.error("Error setting active-only mode", e);
+            }
+        }
+
+        async function toggleWakeCamera() {
+            try {
+                if (currentManualWake) {
+                    await fetch("/api/robot/sleep", { method: "POST" });
+                } else {
+                    await fetch("/api/robot/wake", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ duration: 300 })
+                    });
+                }
+                await checkStatus();
+            } catch (e) {
+                console.error("Error toggling camera wake", e);
+            }
+        }
+
+        async function toggleOverlayMain(checked) {
+            try {
+                cachedOverlayConfig.enabled = checked;
+                const overContainer = document.getElementById("overlay-fields-container");
+                if (overContainer) {
+                    overContainer.style.display = checked ? "block" : "none";
+                }
+                await fetch("/api/settings/overlay", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ enabled: checked })
+                });
+                await checkStatus();
+            } catch (e) {
+                console.error("Error toggling overlay", e);
+            }
+        }
+
+        async function toggleOverlayField(fieldName) {
+            try {
+                const chip = document.getElementById("chip-" + fieldName);
+                const currentVal = chip ? chip.classList.contains("active") : false;
+                const newVal = !currentVal;
+
+                if (chip) {
+                    if (newVal) chip.classList.add("active");
+                    else chip.classList.remove("active");
+                }
+                cachedOverlayConfig[fieldName] = newVal;
+
+                await fetch("/api/settings/overlay", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ [fieldName]: newVal })
+                });
+            } catch (e) {
+                console.error("Error toggling overlay field", e);
+            }
+        }
+
+        async function changeOverlayPosition(pos) {
+            try {
+                cachedOverlayConfig.position = pos;
+                await fetch("/api/settings/overlay", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ position: pos })
+                });
+            } catch (e) {
+                console.error("Error setting overlay position", e);
             }
         }
 
@@ -484,7 +818,7 @@ HTML_UI = """<!DOCTYPE html>
         }
 
         checkStatus();
-        setInterval(checkStatus, 5000);
+        setInterval(checkStatus, 3000);
     </script>
 </body>
 </html>
@@ -508,6 +842,12 @@ class WebUIService:
         self.app.router.add_post("/api/setup/verify", self.handle_setup_verify)
         self.app.router.add_post("/api/setup/save", self.handle_setup_save)
         self.app.router.add_post("/api/setup/reset", self.handle_setup_reset)
+
+        # Settings APIs
+        self.app.router.add_post("/api/settings/overlay", self.handle_settings_overlay)
+        self.app.router.add_post("/api/settings/stream", self.handle_settings_stream)
+        self.app.router.add_post("/api/robot/wake", self.handle_robot_wake)
+        self.app.router.add_post("/api/robot/sleep", self.handle_robot_sleep)
 
         # Proxied stream endpoints
         self.app.router.add_get("/snapshot.jpg", self.handle_snapshot)
@@ -552,6 +892,59 @@ class WebUIService:
                 return c / "config.yaml"
         return Path("config.yaml")
 
+    def save_config_file(self) -> None:
+        """Persist current configuration to config.yaml."""
+        save_file = self._get_config_save_path()
+        yaml_content = {
+            "ecovacs": {
+                "username": self.bridge.config.ecovacs.username,
+                "password": self.bridge.config.ecovacs.password,
+                "country": self.bridge.config.ecovacs.country,
+                "device_id": self.bridge.config.ecovacs.device_id,
+                "access_token": self.bridge.config.ecovacs.access_token,
+                "user_id": self.bridge.config.ecovacs.user_id,
+                "pin": self.bridge.config.ecovacs.pin,
+                "robot_did": self.bridge.config.ecovacs.robot_did,
+            },
+            "rtsp": {
+                "path": self.bridge.config.rtsp.path,
+                "port": self.bridge.config.rtsp.port,
+                "fps": self.bridge.config.rtsp.fps,
+                "bitrate": self.bridge.config.rtsp.bitrate,
+                "preset": self.bridge.config.rtsp.preset,
+                "tune": self.bridge.config.rtsp.tune,
+                "username": self.bridge.config.rtsp.username,
+                "password": self.bridge.config.rtsp.password,
+            },
+            "streamer": {
+                "reconnect_delay_seconds": self.bridge.config.streamer.reconnect_delay_seconds,
+                "appping_interval_seconds": self.bridge.config.streamer.appping_interval_seconds,
+                "stream_timeout_seconds": self.bridge.config.streamer.stream_timeout_seconds,
+                "active_only_video": self.bridge.config.streamer.active_only_video,
+                "standby_fps": self.bridge.config.streamer.standby_fps,
+            },
+            "overlay": {
+                "enabled": self.bridge.config.overlay.enabled,
+                "show_timestamp": self.bridge.config.overlay.show_timestamp,
+                "show_battery": self.bridge.config.overlay.show_battery,
+                "show_mode": self.bridge.config.overlay.show_mode,
+                "show_station": self.bridge.config.overlay.show_station,
+                "show_maintenance": self.bridge.config.overlay.show_maintenance,
+                "show_robot_name": self.bridge.config.overlay.show_robot_name,
+                "position": self.bridge.config.overlay.position,
+            },
+            "logging": {
+                "level": self.bridge.config.log_level,
+            },
+        }
+
+        try:
+            with open(save_file, "w", encoding="utf-8") as f:
+                yaml.dump(yaml_content, f, default_flow_style=False)
+            _LOGGER.info("Saved configuration to %s", save_file)
+        except Exception as e:
+            _LOGGER.error("Failed to write %s: %s", save_file, e)
+
     async def handle_index(self, request: web.Request) -> web.Response:
         return web.Response(text=HTML_UI, content_type="text/html")
 
@@ -561,9 +954,12 @@ class WebUIService:
             or (self.bridge.config.ecovacs.username and self.bridge.config.ecovacs.password)
         )
         robot_name = (self.bridge.robot or {}).get("name") if hasattr(self.bridge, "robot") and self.bridge.robot else "Ecovacs Deebot"
+        st = self.bridge.state_tracker.state if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker else None
+
         return web.json_response({
             "configured": configured,
             "streaming": bool(self.bridge.active_webrtc and not self.bridge.active_webrtc.stop_event.is_set()),
+            "isStandby": bool(getattr(self.bridge, "is_standby", False)),
             "robotName": robot_name,
             "rtspPath": self.bridge.config.rtsp.path,
             "rtspPort": self.bridge.config.rtsp.port,
@@ -572,7 +968,105 @@ class WebUIService:
             "webPort": self.port,
             "hasAuth": bool(self.bridge.config.rtsp.username and self.bridge.config.rtsp.password),
             "rtspUser": self.bridge.config.rtsp.username,
+            "activeOnlyVideo": bool(self.bridge.config.streamer.active_only_video),
+            "overlay": {
+                "enabled": self.bridge.config.overlay.enabled,
+                "show_timestamp": self.bridge.config.overlay.show_timestamp,
+                "show_battery": self.bridge.config.overlay.show_battery,
+                "show_mode": self.bridge.config.overlay.show_mode,
+                "show_station": self.bridge.config.overlay.show_station,
+                "show_maintenance": self.bridge.config.overlay.show_maintenance,
+                "show_robot_name": self.bridge.config.overlay.show_robot_name,
+                "position": self.bridge.config.overlay.position,
+            },
+            "robotState": st.to_dict() if st else {
+                "battery": 100,
+                "is_charging": False,
+                "clean_status": "docked",
+                "station_status": "idle",
+                "is_active": False,
+                "maintenance": {},
+                "manual_wake_active": False,
+            },
         })
+
+    async def handle_settings_overlay(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        cfg = self.bridge.config.overlay
+        if "enabled" in data:
+            cfg.enabled = bool(data["enabled"])
+        if "show_timestamp" in data:
+            cfg.show_timestamp = bool(data["show_timestamp"])
+        if "show_battery" in data:
+            cfg.show_battery = bool(data["show_battery"])
+        if "show_mode" in data:
+            cfg.show_mode = bool(data["show_mode"])
+        if "show_station" in data:
+            cfg.show_station = bool(data["show_station"])
+        if "show_maintenance" in data:
+            cfg.show_maintenance = bool(data["show_maintenance"])
+        if "show_robot_name" in data:
+            cfg.show_robot_name = bool(data["show_robot_name"])
+        if "position" in data:
+            pos = str(data["position"]).strip().lower()
+            if pos in ("top_left", "top_right", "bottom_left", "bottom_right", "top_banner"):
+                cfg.position = pos
+
+        self.bridge.overlay.update_config(cfg)
+        self.save_config_file()
+        return web.json_response({
+            "success": True,
+            "overlay": {
+                "enabled": cfg.enabled,
+                "show_timestamp": cfg.show_timestamp,
+                "show_battery": cfg.show_battery,
+                "show_mode": cfg.show_mode,
+                "show_station": cfg.show_station,
+                "show_maintenance": cfg.show_maintenance,
+                "show_robot_name": cfg.show_robot_name,
+                "position": cfg.position,
+            }
+        })
+
+    async def handle_settings_stream(self, request: web.Request) -> web.Response:
+        data = await request.json()
+        if "active_only_video" in data:
+            self.bridge.config.streamer.active_only_video = bool(data["active_only_video"])
+        if "standby_fps" in data:
+            self.bridge.config.streamer.standby_fps = max(1, min(10, int(data["standby_fps"])))
+
+        self.save_config_file()
+        if hasattr(self.bridge, "mode_change_event"):
+            self.bridge.mode_change_event.set()
+
+        return web.json_response({
+            "success": True,
+            "active_only_video": self.bridge.config.streamer.active_only_video,
+            "standby_fps": self.bridge.config.streamer.standby_fps,
+        })
+
+    async def handle_robot_wake(self, request: web.Request) -> web.Response:
+        duration = 300.0
+        try:
+            data = await request.json()
+            if "duration" in data:
+                duration = float(data["duration"])
+        except Exception:
+            pass
+
+        if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker:
+            self.bridge.state_tracker.manual_wake(duration_seconds=duration)
+        if hasattr(self.bridge, "mode_change_event"):
+            self.bridge.mode_change_event.set()
+        return web.json_response({"success": True, "manual_wake_active": True})
+
+    async def handle_robot_sleep(self, request: web.Request) -> web.Response:
+        if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker:
+            self.bridge.state_tracker.clear_manual_wake()
+        if hasattr(self.bridge, "mode_change_event"):
+            self.bridge.mode_change_event.set()
+        return web.json_response({"success": True, "manual_wake_active": False})
+
     async def handle_setup_login(self, request: web.Request) -> web.Response:
         data = await request.json()
         username = str(data.get("username", "")).strip()
@@ -640,42 +1134,9 @@ class WebUIService:
         self.bridge.config.rtsp.path = rtsp_path
         self.bridge.config.rtsp.username = rtsp_user
         self.bridge.config.rtsp.password = rtsp_pass
-        # Save to config.yaml
-        save_file = self._get_config_save_path()
-        yaml_content = {
-            "ecovacs": {
-                "username": self.bridge.config.ecovacs.username,
-                "password": self.bridge.config.ecovacs.password,
-                "country": self.bridge.config.ecovacs.country,
-                "device_id": self.bridge.config.ecovacs.device_id,
-                "access_token": self.bridge.config.ecovacs.access_token,
-                "user_id": self.bridge.config.ecovacs.user_id,
-                "pin": self.bridge.config.ecovacs.pin,
-                "robot_did": self.bridge.config.ecovacs.robot_did,
-            },
-            "rtsp": {
-                "path": self.bridge.config.rtsp.path,
-                "port": self.bridge.config.rtsp.port,
-                "fps": self.bridge.config.rtsp.fps,
-                "bitrate": self.bridge.config.rtsp.bitrate,
-                "preset": self.bridge.config.rtsp.preset,
-                "tune": self.bridge.config.rtsp.tune,
-                "username": self.bridge.config.rtsp.username,
-                "password": self.bridge.config.rtsp.password,
-            },
-            "streamer": {
-                "reconnect_delay_seconds": self.bridge.config.streamer.reconnect_delay_seconds,
-                "appping_interval_seconds": self.bridge.config.streamer.appping_interval_seconds,
-                "stream_timeout_seconds": self.bridge.config.streamer.stream_timeout_seconds,
-            },
-            "logging": {
-                "level": self.bridge.config.log_level,
-            },
-        }
 
-        with open(save_file, "w", encoding="utf-8") as f:
-            yaml.dump(yaml_content, f, default_flow_style=False)
-        _LOGGER.info("Saved configuration to %s", save_file)
+        # Save to config.yaml
+        self.save_config_file()
 
         # Trigger streamer loop restart
         self.bridge.trigger_restart()
