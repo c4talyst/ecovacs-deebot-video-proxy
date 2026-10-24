@@ -51,7 +51,7 @@ ECOVACS_ERROR_MAP: dict[int, str] = {
     310: "Station Lid Open",
     311: "Replace Dust Bag",
     312: "Dust Bag Full",
-    314: "Water Supply / Ion Module Missing",
+    314: "Heavy-duty Cleaning Solution Empty",
     315: "Water Supply Module Missing",
     316: "Cleaning Sink Full",
     317: "Clean Water Refill Malfunction",
@@ -461,9 +461,6 @@ class RobotStateTracker:
 
         alerts: list[str] = []
         for c in self.state.error_codes:
-            # If 322 (clean water tank malfunction) is active, don't spam 314 (supply module)
-            if c == 314 and 322 in self.state.error_codes:
-                continue
             msg = ECOVACS_ERROR_MAP.get(c, f"Malfunction #{c}")
             if msg and msg not in alerts:
                 alerts.append(msg)
