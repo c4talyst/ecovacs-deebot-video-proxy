@@ -244,7 +244,7 @@ When username and password are set, that single set of credentials automatically
 * **RTSP**: `rtsp://<SERVER_IP>:8554/live` (or `rtsp://<user>:<password>@<SERVER_IP>:8554/live`)
 * **WebRTC (WHEP)**: `http://<SERVER_IP>:8889/live/whep` (HTTP Basic / Bearer auth with `<user>:<password>`)
 * **HLS Web Stream**: `http://<SERVER_IP>:8888/live/` (HTTP Basic Auth with `<user>:<password>`)
-* **Live Web Dashboard & MJPEG & Snapshot**: `http://<SERVER_IP>:8080/` (HTTP Basic Auth with `<user>:<password>`)
+* **Live Web Dashboard & MJPEG & Snapshot**: `http://<SERVER_IP>:8080/` (Modern session cookie login in the browser, plus HTTP Basic Auth and query param compatibility for integrations and curl)
 ### A. Frigate NVR
 Add the camera feed to your Frigate `config.yml`:
 
