@@ -10,6 +10,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import dataclass
 import os
 import sys
@@ -285,16 +286,158 @@ async def test_web_ui_endpoints() -> None:
         await client.close()
 
 
+async def test_web_ui_auth() -> None:
+    print("[5/5] Testing WebUI session auth, popup prevention & basic auth compatibility...")
+    bridge = MockBridge()
+    bridge.config.ecovacs.username = "test@example.com"
+    bridge.config.ecovacs.password = "secret"
+    bridge.config.rtsp.username = "admin"
+    bridge.config.rtsp.password = "secretpass"
+
+    web_svc = WebUIService(bridge, port=8899)
+    app = web_svc.app
+
+    client = TestClient(TestServer(app))
+    await client.start_server()
+
+    try:
+        # 1. Unauthenticated request to / (HTML UI) must return 200 without basic auth challenge
+        resp = await client.get("/")
+        assert resp.status == 200
+        assert "WWW-Authenticate" not in resp.headers
+
+        # 1b. Unauthenticated request to /favicon.ico must return 200 without basic auth challenge
+        resp = await client.get("/favicon.ico")
+        assert resp.status == 200
+        assert "image/svg+xml" in resp.headers.get("Content-Type", "")
+        assert "WWW-Authenticate" not in resp.headers
+
+        # 2. Unauthenticated request to /api/config-status must return 200 with requiresAuth=True, authenticated=False
+        resp = await client.get("/api/config-status")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["requiresAuth"] is True
+        assert data["authenticated"] is False
+        assert "WWW-Authenticate" not in resp.headers
+
+        # 3. Unauthenticated request to protected API endpoint (/api/settings/stream) must return 401 without WWW-Authenticate (no browser popup!)
+        resp = await client.post("/api/settings/stream", json={"active_only_video": True})
+        assert resp.status == 401
+        data = await resp.json()
+        assert data["authenticated"] is False
+        assert "WWW-Authenticate" not in resp.headers, "WWW-Authenticate header must NOT be sent to API to avoid browser popup dialog!"
+        # 4. Failed login attempt
+        resp = await client.post("/api/auth/login", json={"username": "admin", "password": "wrongpassword"})
+        assert resp.status == 401
+        data = await resp.json()
+        assert data["success"] is False
+        assert "WWW-Authenticate" not in resp.headers
+
+        # 5. Successful login attempt - sets session cookie
+        resp = await client.post("/api/auth/login", json={"username": "admin", "password": "secretpass"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+        set_cookies = resp.headers.getall("Set-Cookie", [])
+        assert any("ecovacs_session=" in c for c in set_cookies)
+
+        # 6. Authenticated request using the session cookie
+        resp = await client.get("/api/config-status")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["authenticated"] is True
+        assert data["hasAuth"] is True
+        assert "robotState" in data
+
+        # 7. Authenticated POST to settings using session cookie
+        resp = await client.post("/api/settings/stream", json={"active_only_video": True})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+
+        # 8. Authenticated GET /snapshot.jpg using session cookie
+        resp = await client.get("/snapshot.jpg")
+        assert resp.status == 200
+        body = await resp.read()
+        assert body.startswith(b"\xff\xd8")
+
+        # 9. Logout - sets ecovacs_logged_out cookie and deletes ecovacs_session
+        resp = await client.post("/api/auth/logout")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["success"] is True
+        logout_cookies = resp.headers.getall("Set-Cookie", [])
+        assert any("ecovacs_logged_out=" in c for c in logout_cookies)
+
+        # 10. Post-logout request to /api/config-status even with cached browser Basic Auth must remain logged out!
+        basic_creds = base64.b64encode(b"admin:secretpass").decode("ascii")
+        resp = await client.get("/api/config-status", headers={"Authorization": f"Basic {basic_creds}"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["authenticated"] is False, "Logged out browser must NOT be auto-reauthenticated by cached Basic Auth!"
+
+        # 11. Post-logout request to protected API endpoint should now be 401 even if browser sends cached Basic Auth
+        resp = await client.post(
+            "/api/settings/stream",
+            json={"active_only_video": True},
+            headers={"Authorization": f"Basic {basic_creds}"},
+        )
+        assert resp.status == 401
+
+        # 12. External integrations (curl, Home Assistant) using HTTP Basic Auth without browser cookies
+        clean_client = TestClient(TestServer(app))
+        await clean_client.start_server()
+        try:
+            resp = await clean_client.post(
+                "/api/settings/stream",
+                json={"active_only_video": True},
+                headers={"Authorization": f"Basic {basic_creds}"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["success"] is True
+
+            # HTTP Basic Auth on /snapshot.jpg
+            resp = await clean_client.get(
+                "/snapshot.jpg",
+                headers={"Authorization": f"Basic {basic_creds}"},
+            )
+            assert resp.status == 200
+            body = await resp.read()
+            assert body.startswith(b"\xff\xd8")
+
+            # Query param authentication for direct embeds: /snapshot.jpg?user=admin&pass=secretpass
+            resp = await clean_client.get("/snapshot.jpg?user=admin&pass=secretpass")
+            assert resp.status == 200
+            body = await resp.read()
+            assert body.startswith(b"\xff\xd8")
+        finally:
+            await clean_client.close()
+        # 14. CLI / curl detection on unauthenticated raw stream: curl gets WWW-Authenticate challenge
+        resp = await client.get("/snapshot.jpg", headers={"User-Agent": "curl/7.81.0"})
+        assert resp.status == 401
+        assert "WWW-Authenticate" in resp.headers
+
+        # 15. Browser request on unauthenticated raw stream: browser does NOT get WWW-Authenticate (no popup modal!)
+        resp = await client.get("/snapshot.jpg", headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+        assert resp.status == 401
+        assert "WWW-Authenticate" not in resp.headers
+
+        print("  -> Session auth, popup prevention & basic auth compatibility OK.")
+    finally:
+        await client.close()
+
 def main() -> None:
     print("=" * 60)
-    print("RUNNING ECOVACS DEEBOT VIDEO PROXY v1.0.2 TEST SUITE")
+    print("RUNNING ECOVACS DEEBOT VIDEO PROXY v1.1.0 TEST SUITE")
     print("=" * 60)
     test_config()
     test_robot_state()
     test_overlay()
     asyncio.run(test_web_ui_endpoints())
+    asyncio.run(test_web_ui_auth())
     print("=" * 60)
-    print("ALL TESTS PASSED SUCCESSFULLY! (v1.0.2 verified)")
+    print("ALL TESTS PASSED SUCCESSFULLY! (v1.1.0 verified)")
     print("=" * 60)
 
 

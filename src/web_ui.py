@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import hmac
 import json
 import logging
 import os
 from pathlib import Path
+import time
 from typing import Any
 
+import aiohttp
 from aiohttp import web
 import yaml
 
@@ -31,6 +34,7 @@ HTML_UI = """<!DOCTYPE html>
     <meta charset="utf-8">
     <title>Ecovacs Deebot Video Proxy</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico">
     <style>
         :root {
             --bg: #0b0d13;
@@ -214,6 +218,29 @@ HTML_UI = """<!DOCTYPE html>
             <p>Direct LAN WebRTC, RTSP, HLS & Web Video Proxy</p>
         </div>
 
+        <!-- Web UI Login Card -->
+        <div class="card" id="login-card" style="display: none;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <div style="font-size: 32px; margin-bottom: 8px;">🔒</div>
+                <h3 style="margin: 0 0 6px 0; font-size: 18px;">Authentication Required</h3>
+                <p style="margin: 0; color: var(--text-muted); font-size: 13px;">
+                    Enter your stream credentials to access this dashboard.
+                </p>
+            </div>
+            <div class="alert alert-error" id="login-alert-error" style="display: none;"></div>
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="login-username" placeholder="e.g. admin" autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="login-password" placeholder="••••••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitAuthLogin()">
+            </div>
+            <button class="btn" id="btn-do-login" onclick="submitAuthLogin()">
+                <span>Log In</span>
+            </button>
+        </div>
+
         <!-- Setup Form Card -->
         <div class="card" id="setup-card">
             <div class="step-indicator">
@@ -293,7 +320,7 @@ HTML_UI = """<!DOCTYPE html>
                         <input type="password" id="input-rtsp-pass" placeholder="e.g. secret">
                     </div>
                 </div>
-                <div class="hint" style="margin-bottom: 16px;">Protects all feeds (RTSP, WebRTC, HLS, MJPEG) and this Web UI with HTTP Basic Auth.</div>
+                <div class="hint" style="margin-bottom: 16px;">Protects all feeds (RTSP, WebRTC, HLS, MJPEG) and secures this Web UI with session login and Basic Auth.</div>
                 <button class="btn" id="btn-save" onclick="saveAndStart()">
                     <span>Save Configuration & Start Streaming</span>
                 </button>
@@ -313,7 +340,7 @@ HTML_UI = """<!DOCTYPE html>
 
             <!-- Video Player -->
             <div class="stream-box">
-                <img id="dash-img" src="/mjpeg" alt="Live Stream">
+                <img id="dash-img" src="" alt="Live Stream">
             </div>
 
             <!-- Telemetry Overview Bar -->
@@ -420,7 +447,8 @@ HTML_UI = """<!DOCTYPE html>
             </div>
 
             <div style="display: flex; gap: 10px; margin-top: 16px;">
-                <a href="/snapshot.jpg" target="_blank" class="btn btn-outline" style="text-decoration: none;">Download Snapshot</a>
+                <a id="link-snapshot" href="/snapshot.jpg" target="_blank" class="btn btn-outline" style="text-decoration: none;">Download Snapshot</a>
+                <button class="btn btn-outline" id="btn-logout" style="display: none;" onclick="submitAuthLogout()">Log Out</button>
                 <button class="btn btn-outline" style="color: var(--danger); border-color: rgba(239, 68, 68, 0.4);" onclick="resetConfig()">Reconfigure</button>
             </div>
         </div>
@@ -432,7 +460,8 @@ HTML_UI = """<!DOCTYPE html>
         let hostIP = window.location.hostname;
         let cachedOverlayConfig = {};
         let currentManualWake = false;
-
+        let currentSessionToken = "";
+        let isLoggedOut = false;
         function setAlert(type, msg) {
             ['error', 'success', 'info'].forEach(t => {
                 const el = document.getElementById("alert-" + t);
@@ -458,19 +487,101 @@ HTML_UI = """<!DOCTYPE html>
             }
         }
 
+        function showLoginCard() {
+            document.getElementById("login-card").style.display = "block";
+            document.getElementById("setup-card").style.display = "none";
+            document.getElementById("dashboard-card").style.display = "none";
+            const dashImg = document.getElementById("dash-img");
+            if (dashImg) dashImg.src = "";
+        }
+
+        async function submitAuthLogin() {
+            const username = document.getElementById("login-username").value.trim();
+            const password = document.getElementById("login-password").value;
+            const errEl = document.getElementById("login-alert-error");
+            if (!username || !password) {
+                if (errEl) {
+                    errEl.textContent = "Username and password are required.";
+                    errEl.style.display = "block";
+                }
+                return;
+            }
+            if (errEl) errEl.style.display = "none";
+            setBtnLoading("btn-do-login", true);
+            try {
+                const res = await fetch("/api/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+                setBtnLoading("btn-do-login", false);
+                if (data.success) {
+                    isLoggedOut = false;
+                    currentSessionToken = data.token || "";
+                    document.getElementById("login-password").value = "";
+                    if (errEl) errEl.style.display = "none";
+                    await checkStatus();
+                } else {
+                    if (errEl) {
+                        errEl.textContent = data.error || "Invalid username or password.";
+                        errEl.style.display = "block";
+                    }
+                }
+            } catch (e) {
+                setBtnLoading("btn-do-login", false);
+                if (errEl) {
+                    errEl.textContent = "Network error: " + e.message;
+                    errEl.style.display = "block";
+                }
+            }
+        }
+        async function submitAuthLogout() {
+            isLoggedOut = true;
+            currentSessionToken = "";
+            showLoginCard();
+            try {
+                await fetch("/api/auth/logout", { method: "POST" });
+            } catch (e) {
+                console.error("Logout failed", e);
+            }
+        }
+
         async function checkStatus() {
+            if (isLoggedOut) {
+                showLoginCard();
+                return;
+            }
             try {
                 const res = await fetch("/api/config-status");
                 if (res.status === 401) {
-                    location.reload();
+                    showLoginCard();
                     return;
                 }
                 const data = await res.json();
+                if (data.requiresAuth && !data.authenticated) {
+                    showLoginCard();
+                    return;
+                }
+                if (data.token) {
+                    currentSessionToken = data.token;
+                }
+                document.getElementById("login-card").style.display = "none";
                 if (data.configured) {
                     document.getElementById("setup-card").style.display = "none";
                     document.getElementById("dashboard-card").style.display = "block";
+                    const dashImg = document.getElementById("dash-img");
+                    const streamUrl = currentSessionToken ? ("/mjpeg?token=" + encodeURIComponent(currentSessionToken)) : "/mjpeg";
+                    if (dashImg && (!dashImg.src || !dashImg.src.includes("/mjpeg"))) {
+                        dashImg.src = streamUrl;
+                    }
+                    const snapLink = document.getElementById("link-snapshot");
+                    if (snapLink) {
+                        snapLink.href = currentSessionToken ? ("/snapshot.jpg?token=" + encodeURIComponent(currentSessionToken)) : "/snapshot.jpg";
+                    }
+                    const logoutBtn = document.getElementById("btn-logout");
+                    if (logoutBtn) logoutBtn.style.display = data.hasAuth ? "inline-flex" : "none";
                     document.getElementById("dash-robot-name").textContent = data.robotName || "Ecovacs Vacuum";
-
                     const credPrefix = data.hasAuth ? (encodeURIComponent(data.rtspUser) + ":••••••@") : "";
                     const rtspUrl = "rtsp://" + credPrefix + hostIP + ":" + (data.rtspPort || 8554) + "/" + (data.rtspPath || "live");
                     const webrtcUrl = "http://" + credPrefix + hostIP + ":" + (data.webrtcPort || 8889) + "/" + (data.rtspPath || "live") + "/whep";
@@ -599,6 +710,9 @@ HTML_UI = """<!DOCTYPE html>
                 } else {
                     document.getElementById("setup-card").style.display = "block";
                     document.getElementById("dashboard-card").style.display = "none";
+                    document.getElementById("login-card").style.display = "none";
+                    const dashImg = document.getElementById("dash-img");
+                    if (dashImg) dashImg.src = "";
                 }
             } catch (e) {
                 console.error("Status check failed", e);
@@ -816,6 +930,8 @@ HTML_UI = """<!DOCTYPE html>
                 setBtnLoading("btn-save", false);
 
                 if (data.success) {
+                    isLoggedOut = false;
+                    if (data.token) currentSessionToken = data.token;
                     await checkStatus();
                 } else {
                     setAlert("error", data.error || "Save failed");
@@ -840,8 +956,19 @@ HTML_UI = """<!DOCTYPE html>
 """
 
 
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <circle cx="16" cy="16" r="14" fill="#141722" stroke="#3b82f6" stroke-width="2"/>
+  <circle cx="16" cy="16" r="5" fill="#3b82f6"/>
+  <circle cx="16" cy="8" r="2" fill="#60a5fa"/>
+</svg>"""
+
+
 class WebUIService:
     """Aiohttp Web UI and Setup API."""
+
+    COOKIE_NAME = "ecovacs_session"
+    LOGGED_OUT_COOKIE = "ecovacs_logged_out"
+    SESSION_MAX_AGE = 30 * 86400  # 30 days
 
     def __init__(self, bridge: Any, host: str = "0.0.0.0", port: int = 8080):
         self.bridge = bridge
@@ -852,7 +979,10 @@ class WebUIService:
         self.temp_creds: dict[str, Any] = {}
 
         self.app.router.add_get("/", self.handle_index)
+        self.app.router.add_get("/favicon.ico", self.handle_favicon)
         self.app.router.add_get("/api/config-status", self.handle_config_status)
+        self.app.router.add_post("/api/auth/login", self.handle_auth_login)
+        self.app.router.add_post("/api/auth/logout", self.handle_auth_logout)
         self.app.router.add_post("/api/setup/login", self.handle_setup_login)
         self.app.router.add_post("/api/setup/verify", self.handle_setup_verify)
         self.app.router.add_post("/api/setup/save", self.handle_setup_save)
@@ -868,6 +998,107 @@ class WebUIService:
         self.app.router.add_get("/snapshot.jpg", self.handle_snapshot)
         self.app.router.add_get("/mjpeg", self.handle_mjpeg)
 
+    async def handle_favicon(self, request: web.Request) -> web.Response:
+        return web.Response(
+            text=FAVICON_SVG,
+            content_type="image/svg+xml",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+
+    def _is_session_authenticated(self, request: web.Request) -> bool:
+        cfg_user = (self.bridge.config.rtsp.username or "").strip()
+        cfg_pass = (self.bridge.config.rtsp.password or "").strip()
+
+        # If no credentials configured, unauthenticated access is allowed
+        if not cfg_user or not cfg_pass:
+            return True
+
+        # If explicitly logged out in this browser, session is inactive
+        if request.cookies.get(self.LOGGED_OUT_COOKIE) == "1":
+            return False
+
+        cookie_val = request.cookies.get(self.COOKIE_NAME, "")
+        if cookie_val and self._verify_session_token(cookie_val):
+            return True
+
+        query_token = request.query.get("token") or request.query.get("auth")
+        if query_token and self._verify_session_token(query_token):
+            return True
+
+        return False
+
+    def _get_session_secret(self) -> bytes:
+        cfg_user = (self.bridge.config.rtsp.username or "").strip()
+        cfg_pass = (self.bridge.config.rtsp.password or "").strip()
+        return hashlib.sha256(f"ecovacs_session:{cfg_user}:{cfg_pass}".encode("utf-8")).digest()
+
+    def _create_session_token(self, username: str) -> str:
+        ts = str(int(time.time()))
+        payload = f"{username}:{ts}"
+        secret = self._get_session_secret()
+        sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        raw = f"{payload}:{sig}"
+        return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("utf-8")
+
+    def _verify_session_token(self, token: str) -> bool:
+        if not token:
+            return False
+        try:
+            raw = base64.urlsafe_b64decode(token.encode("utf-8")).decode("utf-8")
+            parts = raw.split(":")
+            if len(parts) != 3:
+                return False
+            user, ts_str, sig = parts
+            cfg_user = (self.bridge.config.rtsp.username or "").strip()
+            if not hmac.compare_digest(user, cfg_user):
+                return False
+            ts = int(ts_str)
+            if time.time() - ts > self.SESSION_MAX_AGE:
+                return False
+            secret = self._get_session_secret()
+            payload = f"{user}:{ts_str}"
+            expected_sig = hmac.new(secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+            return hmac.compare_digest(sig, expected_sig)
+        except Exception:
+            return False
+
+    def _is_authenticated(self, request: web.Request) -> bool:
+        cfg_user = (self.bridge.config.rtsp.username or "").strip()
+        cfg_pass = (self.bridge.config.rtsp.password or "").strip()
+
+        # If no credentials configured, unauthenticated access is allowed
+        if not cfg_user or not cfg_pass:
+            return True
+
+        # 1. Cookie or query-token session
+        if self._is_session_authenticated(request):
+            return True
+
+        # If user explicitly logged out in this browser, ignore browser-cached basic auth headers
+        if request.cookies.get(self.LOGGED_OUT_COOKIE) == "1":
+            return False
+
+        # 2. HTTP Basic Authentication header (for external tools like Frigate, HA, curl)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Basic "):
+            try:
+                raw_b64 = auth_header[6:].strip()
+                decoded = base64.b64decode(raw_b64).decode("utf-8")
+                user, _, password = decoded.partition(":")
+                if hmac.compare_digest(user, cfg_user) and hmac.compare_digest(password, cfg_pass):
+                    return True
+            except Exception:
+                pass
+
+        # 3. Query parameters (user & pass) for integrations / direct embedding
+        q_user = request.query.get("user")
+        q_pass = request.query.get("pass") or request.query.get("password")
+        if q_user and q_pass:
+            if hmac.compare_digest(q_user, cfg_user) and hmac.compare_digest(q_pass, cfg_pass):
+                return True
+
+        return False
+
     @web.middleware
     async def _auth_middleware(
         self,
@@ -881,22 +1112,46 @@ class WebUIService:
         if not cfg_user or not cfg_pass:
             return await handler(request)
 
-        # HTTP Basic Authentication
+        # Allow unauthenticated access to the Web UI shell and auth endpoints
+        if request.path in ("/", "/favicon.ico", "/api/auth/login", "/api/auth/logout"):
+            return await handler(request)
+
+        # Allow /api/config-status without auth so the frontend can detect whether login is needed
+        if request.path == "/api/config-status":
+            return await handler(request)
+
+        # Allow initial setup flow endpoints if the proxy is not yet configured
+        configured = bool(
+            (self.bridge.config.ecovacs.access_token and self.bridge.config.ecovacs.user_id)
+            or (self.bridge.config.ecovacs.username and self.bridge.config.ecovacs.password)
+        )
+        if not configured and request.path.startswith("/api/setup/"):
+            return await handler(request)
+
+        # Check authentication (cookie, basic auth, query params)
+        if self._is_authenticated(request):
+            return await handler(request)
+
+        # Return 401 for unauthenticated requests
+        # For API endpoints, return JSON without WWW-Authenticate header to prevent browser popups
+        if request.path.startswith("/api/"):
+            return web.json_response(
+                {"error": "Unauthorized: credentials required", "authenticated": False},
+                status=401,
+            )
+
+        # For stream endpoints (/snapshot.jpg, /mjpeg):
+        # Only attach WWW-Authenticate if an explicit Authorization attempt was made or client is curl/CLI
+        headers = {}
         auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Basic "):
-            try:
-                raw_b64 = auth_header[6:].strip()
-                decoded = base64.b64decode(raw_b64).decode("utf-8")
-                user, _, password = decoded.partition(":")
-                if hmac.compare_digest(user, cfg_user) and hmac.compare_digest(password, cfg_pass):
-                    return await handler(request)
-            except Exception:
-                pass
+        user_agent = request.headers.get("User-Agent", "").lower()
+        if auth_header.startswith("Basic ") or ("curl" in user_agent) or ("wget" in user_agent):
+            headers["WWW-Authenticate"] = 'Basic realm="Ecovacs Video Proxy"'
 
         return web.Response(
             status=401,
             text="401 Unauthorized: Ecovacs Video Proxy credentials required.\n",
-            headers={"WWW-Authenticate": 'Basic realm="Ecovacs Video Proxy"'},
+            headers=headers,
         )
 
     def _get_config_save_path(self) -> Path:
@@ -963,14 +1218,77 @@ class WebUIService:
     async def handle_index(self, request: web.Request) -> web.Response:
         return web.Response(text=HTML_UI, content_type="text/html")
 
+    async def handle_auth_login(self, request: web.Request) -> web.Response:
+        cfg_user = (self.bridge.config.rtsp.username or "").strip()
+        cfg_pass = (self.bridge.config.rtsp.password or "").strip()
+
+        if not cfg_user or not cfg_pass:
+            return web.json_response({"success": True, "message": "No authentication configured", "token": ""})
+
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"success": False, "error": "Invalid request body"}, status=400)
+
+        username = str(data.get("username", "")).strip()
+        password = str(data.get("password", "")).strip()
+
+        if hmac.compare_digest(username, cfg_user) and hmac.compare_digest(password, cfg_pass):
+            token = self._create_session_token(username)
+            resp = web.json_response({"success": True, "token": token})
+            resp.del_cookie(self.LOGGED_OUT_COOKIE, path="/")
+            resp.set_cookie(
+                self.COOKIE_NAME,
+                token,
+                max_age=self.SESSION_MAX_AGE,
+                path="/",
+                httponly=True,
+                samesite="Lax",
+            )
+            return resp
+
+        return web.json_response({"success": False, "error": "Invalid username or password"}, status=401)
+
+    async def handle_auth_logout(self, request: web.Request) -> web.Response:
+        resp = web.json_response({"success": True})
+        resp.del_cookie(self.COOKIE_NAME, path="/")
+        resp.set_cookie(
+            self.LOGGED_OUT_COOKIE,
+            "1",
+            max_age=self.SESSION_MAX_AGE,
+            path="/",
+            httponly=True,
+            samesite="Lax",
+        )
+        return resp
+
     async def handle_config_status(self, request: web.Request) -> web.Response:
         configured = bool(
             (self.bridge.config.ecovacs.access_token and self.bridge.config.ecovacs.user_id)
             or (self.bridge.config.ecovacs.username and self.bridge.config.ecovacs.password)
         )
+        has_auth = bool(self.bridge.config.rtsp.username and self.bridge.config.rtsp.password)
+        is_authed = self._is_session_authenticated(request)
+
+        # If proxy is configured with auth, but user is unauthenticated, return auth gate
+        if configured and has_auth and not is_authed:
+            return web.json_response({
+                "configured": configured,
+                "hasAuth": True,
+                "requiresAuth": True,
+                "authenticated": False,
+            })
+
         r = self.bridge.robot if hasattr(self.bridge, "robot") and self.bridge.robot else {}
         robot_name = r.get("nick") or r.get("deviceName") or r.get("name") or "Ecovacs Deebot"
         st = self.bridge.state_tracker.state if hasattr(self.bridge, "state_tracker") and self.bridge.state_tracker else None
+
+        token = ""
+        cookie_val = request.cookies.get(self.COOKIE_NAME, "")
+        if cookie_val and self._verify_session_token(cookie_val):
+            token = cookie_val
+        elif has_auth and is_authed and self.bridge.config.rtsp.username:
+            token = self._create_session_token(self.bridge.config.rtsp.username)
 
         return web.json_response({
             "configured": configured,
@@ -982,7 +1300,10 @@ class WebUIService:
             "webrtcPort": 8889,
             "hlsPort": 8888,
             "webPort": self.port,
-            "hasAuth": bool(self.bridge.config.rtsp.username and self.bridge.config.rtsp.password),
+            "hasAuth": has_auth,
+            "requiresAuth": has_auth,
+            "authenticated": is_authed,
+            "token": token,
             "rtspUser": self.bridge.config.rtsp.username,
             "activeOnlyVideo": bool(self.bridge.config.streamer.active_only_video),
             "overlay": {
@@ -1157,7 +1478,21 @@ class WebUIService:
 
         # Trigger streamer loop restart
         self.bridge.trigger_restart()
-        return web.json_response({"success": True})
+        token = ""
+        if rtsp_user and rtsp_pass:
+            token = self._create_session_token(rtsp_user)
+        resp = web.json_response({"success": True, "token": token})
+        resp.del_cookie(self.LOGGED_OUT_COOKIE, path="/")
+        if token:
+            resp.set_cookie(
+                self.COOKIE_NAME,
+                token,
+                max_age=self.SESSION_MAX_AGE,
+                path="/",
+                httponly=True,
+                samesite="Lax",
+            )
+        return resp
 
     async def handle_setup_reset(self, request: web.Request) -> web.Response:
         save_file = self._get_config_save_path()
@@ -1168,7 +1503,10 @@ class WebUIService:
         self.bridge.config.rtsp.username = ""
         self.bridge.config.rtsp.password = ""
         self.bridge.trigger_restart()
-        return web.json_response({"success": True})
+        resp = web.json_response({"success": True})
+        resp.del_cookie(self.COOKIE_NAME, path="/")
+        resp.del_cookie(self.LOGGED_OUT_COOKIE, path="/")
+        return resp
 
     async def handle_snapshot(self, request: web.Request) -> web.Response:
         if self.bridge.latest_jpeg:

@@ -31,7 +31,7 @@ jobs:
         run: |
           PY_VER=$(python3 -c 'import re; print(re.search(r"__version__\s*=\s*[\x22\x27]([^\x22\x27]+)[\x22\x27]", open("src/__init__.py").read()).group(1))')
           GIT_VER=${GITHUB_REF_NAME#v}
-          if [ "$PY_VER" != "$GIT_VER" ]; then
+          if [ "$PY_VER" != "$GIT_VER" ] && [ "$PY_VER.0" != "$GIT_VER" ] && [ "$PY_VER" != "$GIT_VER.0" ]; then
             echo "::error::Tag ($GIT_VER) does not match src/__init__.py ($PY_VER)"
             exit 1
           fi
