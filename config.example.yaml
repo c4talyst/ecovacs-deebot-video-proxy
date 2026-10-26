@@ -39,7 +39,7 @@ streamer:
   appping_interval_seconds: 35
   stream_timeout_seconds: 30
   # Power-saving mode: Only stream video when Robot or Station is active (docked = standby, headlights off)
-  active_only_video: false
+  active_only_video: true
   standby_fps: 2
 
 overlay:
@@ -51,7 +51,7 @@ overlay:
   show_station: true
   show_maintenance: true
   show_robot_name: true
-  position: "top_left"  # top_left, top_right, bottom_left, bottom_right, top_banner
+  position: "top_banner"  # top_banner, top_left, top_right, bottom_left, bottom_right
 
 logging:
   level: "INFO"  # DEBUG or INFO

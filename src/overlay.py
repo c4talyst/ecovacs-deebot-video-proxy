@@ -46,13 +46,14 @@ class StreamOverlay:
         self.config = config
         self._font_14 = _get_font(14)
         self._font_16 = _get_font(16)
+        self._font_18 = _get_font(18)
         self._font_22 = _get_font(22)
         self._standby_cache_time: float = 0.0
         self._cached_standby_frame: VideoFrame | None = None
 
     def update_config(self, new_config: OverlayConfig) -> None:
         self.config = new_config
-
+        self._cached_standby_frame = None
     def _format_clean_status(self, status: str) -> str:
         s = (status or "idle").lower().replace("_", " ")
         if s in ("clean", "cleaning"):
@@ -150,7 +151,7 @@ class StreamOverlay:
             rendered_chips.append((text, color, chip_w, th))
             total_width += chip_w + 8
 
-        pos = (self.config.position or "top_left").lower()
+        pos = (self.config.position or "top_banner").lower()
 
         if pos == "top_banner":
             # Draw semi-transparent header bar across full width
@@ -175,7 +176,7 @@ class StreamOverlay:
             elif pos == "bottom_right":
                 curr_x = max(16, width - total_width - 16)
                 curr_y = height - 42
-            else:  # top_left default
+            else:  # top_left
                 curr_x = 16
                 curr_y = 16
 
@@ -215,7 +216,7 @@ class StreamOverlay:
         draw = ImageDraw.Draw(img)
 
         # Subtle background grid & card
-        card_w, card_h = 760, 420
+        card_w, card_h = 800, 420
         cx = (width - card_w) // 2
         cy = (height - card_h) // 2
 
@@ -228,7 +229,7 @@ class StreamOverlay:
             width=2,
         )
 
-        # Top Accent Header Bar
+        # Top Accent Header Bar (timestamp removed to avoid duplication with overlay)
         draw.rounded_rectangle(
             [cx + 2, cy + 2, cx + card_w - 2, cy + 46],
             radius=14,
@@ -241,20 +242,11 @@ class StreamOverlay:
             font=self._font_14,
         )
 
-        # Clock
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        draw.text(
-            (cx + card_w - 180, cy + 14),
-            ts,
-            fill=(156, 163, 175),
-            font=self._font_14,
-        )
-
         # Standby Title
         status_label = "ROBOT DOCKED & CHARGING" if st.is_charging else "ROBOT DOCKED (STANDBY)"
         status_color = (74, 222, 128) if st.is_charging else (96, 165, 250)
         draw.text(
-            (cx + 40, cy + 75),
+            (cx + 40, cy + 72),
             status_label,
             fill=status_color,
             font=self._font_22,
@@ -263,61 +255,74 @@ class StreamOverlay:
         # Subtitle Explanation or Active Malfunction Alert
         if st.error_alerts:
             alert_text = " • ".join(st.error_alerts).upper()
-            draw.rounded_rectangle([cx + 40, cy + 110, cx + card_w - 40, cy + 152], radius=8, fill=(80, 20, 25), outline=(239, 68, 68), width=1)
-            draw.text((cx + 56, cy + 122), f"⚠ ALERT: {alert_text}", fill=(254, 202, 202), font=self._font_16)
+            draw.rounded_rectangle([cx + 40, cy + 108, cx + card_w - 40, cy + 150], radius=8, fill=(80, 20, 25), outline=(239, 68, 68), width=1)
+            draw.text((cx + 56, cy + 120), f"⚠ ALERT: {alert_text}", fill=(254, 202, 202), font=self._font_16)
         else:
             draw.text(
-                (cx + 40, cy + 112),
+                (cx + 40, cy + 108),
                 "Camera and headlights are powered down to conserve energy and prevent night glare.",
                 fill=(156, 163, 175),
                 font=self._font_14,
             )
             draw.text(
-                (cx + 40, cy + 132),
+                (cx + 40, cy + 128),
                 "Live video resumes automatically whenever cleaning or station tasks activate.",
                 fill=(107, 114, 128),
                 font=self._font_14,
             )
-        # Grid of Stats
-        grid_y = cy + 175
+
+        # Grid of Stats (3 balanced 230px boxes across 720px inner width)
+        grid_y = cy + 168
+        box_w, box_gap = 230, 15
 
         # 1. Battery Box
-        draw.rounded_rectangle([cx + 40, grid_y, cx + 250, grid_y + 90], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
-        draw.text((cx + 54, grid_y + 14), "BATTERY LEVEL", fill=(156, 163, 175), font=self._font_14)
+        b1_x = cx + 40
+        draw.rounded_rectangle([b1_x, grid_y, b1_x + box_w, grid_y + 90], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
+        draw.text((b1_x + 16, grid_y + 14), "BATTERY LEVEL", fill=(156, 163, 175), font=self._font_14)
         chg_tag = " [Charging]" if st.is_charging else ""
-        draw.text((cx + 54, grid_y + 40), f"{st.battery}%{chg_tag}", fill=(74, 222, 128), font=self._font_22)
+        draw.text((b1_x + 16, grid_y + 42), f"{st.battery}%{chg_tag}", fill=(74, 222, 128), font=self._font_18)
 
         # 2. Station State Box
-        draw.rounded_rectangle([cx + 270, grid_y, cx + 480, grid_y + 90], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
-        draw.text((cx + 284, grid_y + 14), "STATION STATUS", fill=(156, 163, 175), font=self._font_14)
-        draw.text((cx + 284, grid_y + 42), self._format_station_status(st.station_status), fill=(244, 114, 182), font=self._font_16)
+        b2_x = b1_x + box_w + box_gap
+        draw.rounded_rectangle([b2_x, grid_y, b2_x + box_w, grid_y + 90], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
+        draw.text((b2_x + 16, grid_y + 14), "STATION STATUS", fill=(156, 163, 175), font=self._font_14)
+        draw.text((b2_x + 16, grid_y + 42), self._format_station_status(st.station_status), fill=(244, 114, 182), font=self._font_18)
 
         # 3. Clean State Box
-        draw.rounded_rectangle([cx + 500, grid_y, cx + 710, grid_y + 90], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
-        draw.text((cx + 514, grid_y + 14), "ROBOT MODE", fill=(156, 163, 175), font=self._font_14)
-        draw.text((cx + 514, grid_y + 42), self._format_clean_status(st.clean_status), fill=(56, 189, 248), font=self._font_16)
+        b3_x = b2_x + box_w + box_gap
+        draw.rounded_rectangle([b3_x, grid_y, b3_x + box_w, grid_y + 90], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
+        draw.text((b3_x + 16, grid_y + 14), "ROBOT MODE", fill=(156, 163, 175), font=self._font_14)
+        draw.text((b3_x + 16, grid_y + 42), self._format_clean_status(st.clean_status), fill=(56, 189, 248), font=self._font_18)
 
         # Maintenance items row
-        maint_y = grid_y + 110
-        draw.rounded_rectangle([cx + 40, maint_y, cx + 710, maint_y + 75], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
-        draw.text((cx + 54, maint_y + 10), "CONSUMABLE LIFESPAN", fill=(156, 163, 175), font=self._font_14)
+        maint_y = grid_y + 104
+        inner_w = card_w - 80
+        draw.rounded_rectangle([cx + 40, maint_y, cx + 40 + inner_w, maint_y + 75], radius=10, fill=(15, 18, 28), outline=(36, 44, 62))
+        draw.text((cx + 56, maint_y + 12), "CONSUMABLE LIFESPAN", fill=(156, 163, 175), font=self._font_14)
 
         maint_items = st.maintenance or {"Filter": 88, "Main Brush": 92, "Side Brush": 85, "Mop Pads": 95}
-        mx = cx + 54
-        for name, pct in list(maint_items.items())[:4]:
+        items = list(maint_items.items())[:4]
+        col_w = (inner_w - 32) // max(1, len(items))
+        for idx, (name, pct) in enumerate(items):
+            mx = cx + 56 + idx * col_w
             val_color = (74, 222, 128) if pct > 20 else (248, 113, 113)
-            draw.text((mx, maint_y + 38), f"{name}: {pct}%", fill=val_color, font=self._font_14)
-            mx += 165
+            draw.text((mx, maint_y + 40), f"{name}: {pct}%", fill=val_color, font=self._font_14)
 
-        # Footer Status bar
+        # Footer Status bar (centered to prevent edge overflow)
+        footer_text = "● RTSP Stream Active (8554)  •  Web UI Live  •  Waiting for Robot Activity..."
+        f_bbox = self._font_14.getbbox(footer_text)
+        f_w = f_bbox[2] - f_bbox[0]
+        f_x = cx + (card_w - f_w) // 2
         draw.text(
-            (cx + 40, cy + card_h - 32),
-            "● RTSP STREAM ACTIVE (MediaMTX 8554)  |  Web UI & MJPEG Live  |  Waiting for Robot Activity...",
+            (f_x, cy + card_h - 32),
+            footer_text,
             fill=(59, 130, 246),
             font=self._font_14,
         )
 
-        frame = VideoFrame.from_image(img)
-        self._cached_standby_frame = frame
+        base_frame = VideoFrame.from_image(img)
+        # Apply standard on-screen display telemetry overlay at configured position
+        final_frame = self.render_overlay(base_frame, st, robot_name)
+        self._cached_standby_frame = final_frame
         self._standby_cache_time = now
-        return frame
+        return final_frame
