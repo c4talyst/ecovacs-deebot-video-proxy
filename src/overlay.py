@@ -151,7 +151,7 @@ class StreamOverlay:
             rendered_chips.append((text, color, chip_w, th))
             total_width += chip_w + 8
 
-        pos = (self.config.position or "top_left").lower()
+        pos = (self.config.position or "top_banner").lower()
 
         if pos == "top_banner":
             # Draw semi-transparent header bar across full width
@@ -176,7 +176,7 @@ class StreamOverlay:
             elif pos == "bottom_right":
                 curr_x = max(16, width - total_width - 16)
                 curr_y = height - 42
-            else:  # top_left default
+            else:  # top_left
                 curr_x = 16
                 curr_y = 16
 

@@ -136,7 +136,7 @@ async def run_setup() -> None:
                 "show_station": True,
                 "show_maintenance": True,
                 "show_robot_name": True,
-                "position": "top_left",
+                "position": "top_banner",
             },
             "logging": {
                 "level": "INFO",
@@ -174,7 +174,7 @@ OVERLAY_SHOW_MODE="true"
 OVERLAY_SHOW_STATION="true"
 OVERLAY_SHOW_MAINTENANCE="true"
 OVERLAY_SHOW_ROBOT_NAME="true"
-OVERLAY_POSITION="top_left"
+OVERLAY_POSITION="top_banner"
 LOG_LEVEL="INFO"
 """
         with open(env_file, "w", encoding="utf-8") as f:

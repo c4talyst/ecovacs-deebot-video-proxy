@@ -234,7 +234,7 @@ RTSP_USERNAME="admin"        # Optional: Protects RTSP, WebRTC, HLS & Web UI
 RTSP_PASSWORD="supersecret"  # Optional: Protects RTSP, WebRTC, HLS & Web UI
 ACTIVE_ONLY_VIDEO="false"    # Set to "true" to only stream when active
 OVERLAY_ENABLED="true"       # Set to "true" to burn stats into the feed
-OVERLAY_POSITION="top_left"  # top_left, top_right, bottom_left, bottom_right, top_banner
+OVERLAY_POSITION="top_banner"  # top_banner, top_left, top_right, bottom_left, bottom_right
 WEB_PORT=8080
 
 ---

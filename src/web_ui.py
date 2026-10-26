@@ -420,11 +420,11 @@ HTML_UI = """<!DOCTYPE html>
                     <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px;">
                         <span style="font-size: 12px; color: var(--text-muted); font-weight: 600;">Overlay Position:</span>
                         <select id="select-overlay-pos" style="width: auto; padding: 6px 10px; font-size: 12.5px;" onchange="changeOverlayPosition(this.value)">
-                            <option value="top_left">Top-Left (Default)</option>
+                            <option value="top_banner">Top Banner (Default)</option>
+                            <option value="top_left">Top-Left</option>
                             <option value="top_right">Top-Right</option>
                             <option value="bottom_left">Bottom-Left</option>
                             <option value="bottom_right">Bottom-Right</option>
-                            <option value="top_banner">Top Banner (Full Width)</option>
                         </select>
                     </div>
                 </div>
@@ -704,7 +704,7 @@ HTML_UI = """<!DOCTYPE html>
                     // Update position
                     const posSelect = document.getElementById("select-overlay-pos");
                     if (posSelect && document.activeElement !== posSelect) {
-                        posSelect.value = cachedOverlayConfig.position || "top_left";
+                        posSelect.value = cachedOverlayConfig.position || "top_banner";
                     }
 
                 } else {

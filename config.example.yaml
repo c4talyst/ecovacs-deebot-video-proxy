@@ -51,7 +51,7 @@ overlay:
   show_station: true
   show_maintenance: true
   show_robot_name: true
-  position: "top_left"  # top_left, top_right, bottom_left, bottom_right, top_banner
+  position: "top_banner"  # top_banner, top_left, top_right, bottom_left, bottom_right
 
 logging:
   level: "INFO"  # DEBUG or INFO

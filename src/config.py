@@ -51,7 +51,7 @@ class OverlayConfig:
     show_station: bool = True
     show_maintenance: bool = True
     show_robot_name: bool = True
-    position: str = "top_left"  # "top_left", "top_right", "bottom_left", "bottom_right", "top_banner"
+    position: str = "top_banner"  # "top_banner", "top_left", "top_right", "bottom_left", "bottom_right"
 
 
 @dataclass
@@ -166,7 +166,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         show_station=_to_bool(get_val("OVERLAY_SHOW_STATION", "overlay", "show_station", True), True),
         show_maintenance=_to_bool(get_val("OVERLAY_SHOW_MAINTENANCE", "overlay", "show_maintenance", True), True),
         show_robot_name=_to_bool(get_val("OVERLAY_SHOW_ROBOT_NAME", "overlay", "show_robot_name", True), True),
-        position=str(get_val("OVERLAY_POSITION", "overlay", "position", "top_left")),
+        position=str(get_val("OVERLAY_POSITION", "overlay", "position", "top_banner")),
     )
 
     log_level = str(get_val("LOG_LEVEL", "logging", "level", "INFO")).upper()

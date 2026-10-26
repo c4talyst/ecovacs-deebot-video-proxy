@@ -35,7 +35,7 @@ def test_config() -> None:
     assert hasattr(cfg.streamer, "standby_fps"), "StreamerConfig missing standby_fps"
     assert hasattr(cfg, "overlay"), "AppConfig missing overlay"
     assert isinstance(cfg.overlay, OverlayConfig), "AppConfig.overlay must be OverlayConfig"
-
+    assert cfg.overlay.position == "top_banner", f"Default overlay position must be top_banner, got {cfg.overlay.position}"
     # Test boolean helper
     assert _to_bool("true") is True
     assert _to_bool("1") is True
@@ -46,11 +46,11 @@ def test_config() -> None:
     # Test env var override
     os.environ["ACTIVE_ONLY_VIDEO"] = "true"
     os.environ["OVERLAY_SHOW_BATTERY"] = "false"
-    os.environ["OVERLAY_POSITION"] = "top_banner"
+    os.environ["OVERLAY_POSITION"] = "bottom_right"
     cfg2 = load_config()
     assert cfg2.streamer.active_only_video is True
     assert cfg2.overlay.show_battery is False
-    assert cfg2.overlay.position == "top_banner"
+    assert cfg2.overlay.position == "bottom_right"
     os.environ.pop("ACTIVE_ONLY_VIDEO", None)
     os.environ.pop("OVERLAY_SHOW_BATTERY", None)
     os.environ.pop("OVERLAY_POSITION", None)
@@ -159,7 +159,7 @@ def test_overlay() -> None:
         show_station=True,
         show_maintenance=True,
         show_robot_name=True,
-        position="top_left",
+        position="top_banner",
     )
     overlay = StreamOverlay(over_cfg)
 
@@ -181,7 +181,7 @@ def test_overlay() -> None:
     assert out_frame.height == 720
 
     # 2. Test different positions
-    for pos in ["top_right", "bottom_left", "bottom_right", "top_banner"]:
+    for pos in ["top_left", "top_right", "bottom_left", "bottom_right"]:
         overlay.config.position = pos
         f = overlay.render_overlay(in_frame, st, "Deebot T30 Pro")
         assert f.width == 1280
@@ -200,7 +200,7 @@ def test_overlay() -> None:
     assert s_img.size == (1280, 720)
 
     # 5. Test standby frame across different overlay positions
-    for pos in ["top_right", "bottom_left", "bottom_right", "top_banner"]:
+    for pos in ["top_banner", "top_left", "top_right", "bottom_left", "bottom_right"]:
         overlay.update_config(OverlayConfig(enabled=True, position=pos))
         sb = overlay.generate_standby_frame(1280, 720, st, "Deebot T30 Pro")
         assert sb.width == 1280
