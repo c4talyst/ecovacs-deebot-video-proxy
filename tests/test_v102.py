@@ -198,6 +198,19 @@ def test_overlay() -> None:
     assert standby.height == 720
     s_img = standby.to_image()
     assert s_img.size == (1280, 720)
+
+    # 5. Test standby frame across different overlay positions
+    for pos in ["top_right", "bottom_left", "bottom_right", "top_banner"]:
+        overlay.update_config(OverlayConfig(enabled=True, position=pos))
+        sb = overlay.generate_standby_frame(1280, 720, st, "Deebot T30 Pro")
+        assert sb.width == 1280
+        assert sb.height == 720
+
+    # 6. Test standby frame with overlay disabled
+    overlay.update_config(OverlayConfig(enabled=False))
+    sb_disabled = overlay.generate_standby_frame(1280, 720, st, "Deebot T30 Pro")
+    assert sb_disabled.width == 1280
+    assert sb_disabled.height == 720
     print("  -> StreamOverlay rendering & standby generation OK.")
 
 
