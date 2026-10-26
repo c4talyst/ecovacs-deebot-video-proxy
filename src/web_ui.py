@@ -372,7 +372,7 @@ HTML_UI = """<!DOCTYPE html>
                     </div>
                 </div>
                 <label class="switch">
-                    <input type="checkbox" id="switch-active-only" onchange="toggleActiveOnly(this.checked)">
+                    <input type="checkbox" id="switch-active-only" checked onchange="toggleActiveOnly(this.checked)">
                     <span class="slider"></span>
                 </label>
             </div>

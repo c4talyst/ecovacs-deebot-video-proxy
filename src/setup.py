@@ -125,7 +125,7 @@ async def run_setup() -> None:
                 "reconnect_delay_seconds": 5,
                 "appping_interval_seconds": 35,
                 "stream_timeout_seconds": 30,
-                "active_only_video": False,
+                "active_only_video": True,
                 "standby_fps": 2,
             },
             "overlay": {
@@ -166,7 +166,7 @@ RTSP_FPS=16
 RTSP_BITRATE="1500k"
 RTSP_USERNAME="{rtsp_user}"
 RTSP_PASSWORD="{rtsp_pass}"
-ACTIVE_ONLY_VIDEO="false"
+ACTIVE_ONLY_VIDEO="true"
 OVERLAY_ENABLED="true"
 OVERLAY_SHOW_TIMESTAMP="true"
 OVERLAY_SHOW_BATTERY="true"

@@ -38,7 +38,7 @@ class StreamerConfig:
     reconnect_delay_seconds: int = 5
     appping_interval_seconds: int = 35
     stream_timeout_seconds: int = 30
-    active_only_video: bool = False
+    active_only_video: bool = True
     standby_fps: int = 2
 
 
@@ -154,7 +154,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
         reconnect_delay_seconds=int(get_val("RECONNECT_DELAY_SECONDS", "streamer", "reconnect_delay_seconds", 5)),
         appping_interval_seconds=int(get_val("APPPING_INTERVAL_SECONDS", "streamer", "appping_interval_seconds", 35)),
         stream_timeout_seconds=int(get_val("STREAM_TIMEOUT_SECONDS", "streamer", "stream_timeout_seconds", 30)),
-        active_only_video=_to_bool(get_val("ACTIVE_ONLY_VIDEO", "streamer", "active_only_video", False), False),
+        active_only_video=_to_bool(get_val("ACTIVE_ONLY_VIDEO", "streamer", "active_only_video", True), True),
         standby_fps=int(get_val("STANDBY_FPS", "streamer", "standby_fps", 2)),
     )
 

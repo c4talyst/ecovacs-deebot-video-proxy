@@ -31,7 +31,7 @@ from src.web_ui import WebUIService
 def test_config() -> None:
     print("[1/4] Testing config parsing and defaults...")
     cfg = load_config()
-    assert hasattr(cfg.streamer, "active_only_video"), "StreamerConfig missing active_only_video"
+    assert cfg.streamer.active_only_video is True, f"Default active_only_video must be True, got {cfg.streamer.active_only_video}"
     assert hasattr(cfg.streamer, "standby_fps"), "StreamerConfig missing standby_fps"
     assert hasattr(cfg, "overlay"), "AppConfig missing overlay"
     assert isinstance(cfg.overlay, OverlayConfig), "AppConfig.overlay must be OverlayConfig"
@@ -44,11 +44,11 @@ def test_config() -> None:
     assert _to_bool(None, default=True) is True
 
     # Test env var override
-    os.environ["ACTIVE_ONLY_VIDEO"] = "true"
+    os.environ["ACTIVE_ONLY_VIDEO"] = "false"
     os.environ["OVERLAY_SHOW_BATTERY"] = "false"
     os.environ["OVERLAY_POSITION"] = "bottom_right"
     cfg2 = load_config()
-    assert cfg2.streamer.active_only_video is True
+    assert cfg2.streamer.active_only_video is False
     assert cfg2.overlay.show_battery is False
     assert cfg2.overlay.position == "bottom_right"
     os.environ.pop("ACTIVE_ONLY_VIDEO", None)
